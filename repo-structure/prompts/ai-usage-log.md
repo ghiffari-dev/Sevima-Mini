@@ -13,7 +13,7 @@ Anda adalah arsitek sistem. Buat class diagram UML untuk sistem akademik dengan 
 -Schedule dengan hari, jam, ruangan
 -Grade untuk nilai mahasiswa Terapkan prinsip SOLID.
 
-Gunakan composition untuk relasi kuat dan aggregation untuk relasi lemah. Output dalam format Mermaid. 
+Gunakan composition untuk relasi kuat dan aggregation untuk relasi lemah. Output dalam format Mermaid.
 
 ### Hasil AI
 classDiagram
