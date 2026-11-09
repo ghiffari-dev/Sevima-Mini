@@ -2,28 +2,37 @@
 sequenceDiagram
     autonumber
     actor CalonMahasiswa as Calon Mahasiswa
-    participant UI as Portal PMB UI
-    participant Pendaftaran as PendaftaranPMB
-    participant Payment as PembayaranPMB
-    participant Admin as Admin Akademik
+    participant RegistrationUI as RegistrationUI
+    participant PendaftaranPMB as PendaftaranPMB
+    participant PembayaranPMB as PembayaranPMB
+    participant Admin as Admin
 
-    CalonMahasiswa->>UI: Mengakses form pendaftaran & mengisi data diri
-    UI->>Pendaftaran: submitPendaftaran(pilihanJurusan)
-    activate Pendaftaran
-    Pendaftaran-->>UI: Menghasilkan ID Pendaftaran & Invoice Tagihan
-    deactivate Pendaftaran
+    CalonMahasiswa->>RegistrationUI: Membuka formulir PMB
+    RegistrationUI-->>CalonMahasiswa: Menampilkan formulir pendaftaran
+    CalonMahasiswa->>RegistrationUI: Mengisi data diri dan memilih jurusan
+    RegistrationUI->>PendaftaranPMB: Validasi data & simpan pendaftaran
+    activate PendaftaranPMB
+    PendaftaranPMB->>PendaftaranPMB: Memvalidasi data
+    PendaftaranPMB->>PendaftaranPMB: Menyimpan pendaftaran
+    PendaftaranPMB->>PembayaranPMB: Membuat tagihan pembayaran
+    activate PembayaranPMB
+    PembayaranPMB-->>PendaftaranPMB: Tagihan berhasil dibuat
+    deactivate PembayaranPMB
+    PendaftaranPMB-->>RegistrationUI: Pendaftaran & tagihan siap
+    deactivate PendaftaranPMB
+    RegistrationUI-->>CalonMahasiswa: Menampilkan tagihan pembayaran
 
-    UI-->>CalonMahasiswa: Menampilkan tagihan pembayaran PMB
-    CalonMahasiswa->>Payment: Melakukan pembayaran biaya PMB
-    activate Payment
-    Payment->>Payment: verifikasiPayment()
-    Payment-->>CalonMahasiswa: Konfirmasi pembayaran berhasil
-    deactivate Payment
+    CalonMahasiswa->>PembayaranPMB: Melakukan pembayaran
+    activate PembayaranPMB
+    PembayaranPMB->>PembayaranPMB: Menerima informasi pembayaran
+    PembayaranPMB-->>CalonMahasiswa: Konfirmasi pembayaran diterima
+    deactivate PembayaranPMB
 
-    Admin->>Pendaftaran: verifikasiPMB(idPendaftaran)
-    activate Pendaftaran
-    Pendaftaran->>Pendaftaran: Update status seleksi "Diterima"
-    Pendaftaran-->>Admin: Notifikasi verifikasi selesai
-    deactivate Pendaftaran
-
-    Admin-->>CalonMahasiswa: Mengirimkan pengumuman & Akun Mahasiswa
+    Admin->>PendaftaranPMB: Memverifikasi pembayaran dan hasil seleksi
+    activate PendaftaranPMB
+    PendaftaranPMB->>PendaftaranPMB: Memperbarui status pendaftaran
+    alt Diterima
+        PendaftaranPMB->>PendaftaranPMB: Membuat/mengaktifkan akun mahasiswa
+    end
+    PendaftaranPMB-->>Admin: Proses verifikasi selesai
+    deactivate PendaftaranPMB

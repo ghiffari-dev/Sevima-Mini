@@ -1,34 +1,41 @@
 %% Sequence Diagram - Kartu Rencana Studi (KRS)
 sequenceDiagram
     autonumber
-    actor Mahasiswa as Mahasiswa Aktif
-    participant UI as Portal Akademik UI
-    participant Course as Course / Kelas
-    participant KRS as PendaftaranKRS
-    participant Payment as PembayaranKRS
+    actor Mahasiswa as Mahasiswa
+    participant KRS_UI as KRS_UI
+    participant Course as Course/Kelas
+    participant PendaftaranKRS as PendaftaranKRS
+    participant PembayaranKRS as PembayaranKRS
 
-    Mahasiswa->>UI: Membuka menu pengisian KRS
-    UI->>Course: getCourseDetails() & getKelasInfo()
+    Mahasiswa->>KRS_UI: Membuka menu KRS
+    KRS_UI->>Course: Meminta daftar mata kuliah & kelas
     activate Course
-    Course-->>UI: Menampilkan daftar mata kuliah & jadwal
+    Course-->>KRS_UI: Menampilkan daftar mata kuliah dan kelas
     deactivate Course
+    KRS_UI-->>Mahasiswa: Menampilkan daftar mata kuliah & kelas
 
-    UI-->>Mahasiswa: Menampilkan pilihan kelas
-    Mahasiswa->>KRS: Memilih mata kuliah & kelas (prosesKRS)
-    activate KRS
-    KRS->>KRS: Validasi SKS maksimum & prasyarat
-    KRS-->>UI: Menghasilkan rekap KRS & Tagihan Pembayaran
-    deactivate KRS
+    Mahasiswa->>KRS_UI: Memilih mata kuliah
+    KRS_UI->>PendaftaranKRS: prosesKRS(pilihanMatkul)
+    activate PendaftaranKRS
+    PendaftaranKRS->>PendaftaranKRS: Validasi prasyarat, jumlah SKS, jadwal bentrok, kapasitas
+    PendaftaranKRS->>PendaftaranKRS: Menyimpan pilihan KRS sementara
+    PendaftaranKRS->>PembayaranKRS: Menghitung total tagihan pembayaran KRS
+    activate PembayaranKRS
+    PembayaranKRS-->>PendaftaranKRS: Tagihan pembayaran KRS siap
+    deactivate PembayaranKRS
+    PendaftaranKRS-->>KRS_UI: Rekap KRS sementara & Tagihan
+    deactivate PendaftaranKRS
+    KRS_UI-->>Mahasiswa: Menampilkan tagihan pembayaran KRS
 
-    UI-->>Mahasiswa: Menampilkan tagihan pembayaran KRS
-    Mahasiswa->>Payment: Melakukan pembayaran KRS (buatInvoiceKRS)
-    activate Payment
-    Payment->>Payment: verifyPayment()
-    Payment-->>Mahasiswa: Konfirmasi pembayaran KRS sukses
-    deactivate Payment
+    Mahasiswa->>PembayaranKRS: Melakukan pembayaran
+    activate PembayaranKRS
+    PembayaranKRS->>PembayaranKRS: Memverifikasi pembayaran
+    PembayaranKRS-->>Mahasiswa: Konfirmasi pembayaran lunas
+    deactivate PembayaranKRS
 
-    Payment->>KRS: Konfirmasi lunas
-    activate KRS
-    KRS->>KRS: Menghasilkan Enrollment & Grade (kosong)
-    KRS-->>Mahasiswa: KRS resmi disetujui & tercatat di sistem
-    deactivate KRS
+    PembayaranKRS->>PendaftaranKRS: Konfirmasi pembayaran valid
+    activate PendaftaranKRS
+    PendaftaranKRS->>PendaftaranKRS: Mengonfirmasi KRS
+    PendaftaranKRS->>PendaftaranKRS: Membuat data Enrollment untuk kelas yang diambil
+    PendaftaranKRS-->>Mahasiswa: KRS resmi disetujui & tercatat
+    deactivate PendaftaranKRS

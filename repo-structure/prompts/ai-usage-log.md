@@ -652,19 +652,33 @@ Membuat versi awal Sequence Diagram untuk alur Pendaftaran Mahasiswa Baru (PMB) 
 - **Kelebihan**: Alur proses pendaftaran awal tergambar dengan jelas dan runtut.
 - **Catatan**: Menjadi dasar bagi proses validasi pendaftaran sebelum mahasiswa memasuki tahap KRS.
 
-## Log 12 — Perancangan Sequence Diagram Pengisian Kartu Rencana Studi (KRS)
+## Log 13 — Penyempurnaan Alur Sequence Diagram Pendaftaran Mahasiswa Baru (PMB)
 
 ### Tujuan
-Membuat versi awal Sequence Diagram untuk alur Pengisian Kartu Rencana Studi (KRS) menggunakan Mermaid, yang mencakup interaksi `Mahasiswa Aktif`, `Portal Akademik UI`, `Course/Kelas`, `PendaftaranKRS`, dan `PembayaranKRS`.
+Menyesuaikan alur Sequence Diagram PMB agar sesuai dengan 11 langkah spesifik dan pemisahan tegas antara pembayaran dan hasil seleksi (status diterima tidak otomatis muncul hanya karena pembayaran berhasil).
 
 ### Perintah (Prompt)
-"Buat sequence diagram Mermaid untuk alur pengisian KRS oleh Mahasiswa Aktif, mencakup pemilihan mata kuliah, validasi SKS/prasyarat oleh PendaftaranKRS, pembayaran KRS melalui PembayaranKRS, hingga pembentukan objek Enrollment."
+"Perbarui sequence diagram PMB dengan alur: Calon mahasiswa membuka formulir -> Sistem menampilkan formulir -> Mengisi data dan memilih jurusan -> Validasi data -> Simpan pendaftaran -> Buat tagihan -> Melakukan pembayaran -> Menerima info pembayaran -> Admin memverifikasi pembayaran dan hasil seleksi (terpisah dari pembayaran) -> Update status pendaftaran -> Jika diterima, buat/aktifkan akun mahasiswa. Gunakan aktor CalonMahasiswa, RegistrationUI, PendaftaranPMB, PembayaranPMB, dan Admin."
 
 ### Hasil
-- Diagram urutan (*sequence*) berbasis Mermaid yang merepresentasikan proses KRS secara lengkap.
-- Keterkaitan langsung antara pemilihan kelas, validasi, pembayaran, dan pembuatan `Enrollment`.
+- Alur sequence diagram PMB kini sepenuhnya mencerminkan 11 langkah proses bisnis yang akurat.
+- Pemisahan jelas bahwa pembayaran dan verifikasi hasil seleksi adalah dua proses berbeda yang diverifikasi oleh Admin.
 
 ### Evaluasi (Objektif)
-- **Kelebihan**: Menggambarkan siklus akademik operasional setelah mahasiswa diterima.
-- **Catatan**: Kedua file log PMB dan KRS dipisahkan sesuai permintaan untuk menjaga kerapian dokumentasi histori AI.
+- **Kelebihan**: Alur bisnis PMB lebih realistis dan sesuai standar operasional institusi pendidikan.
+- **Catatan**: Log ini dipisahkan dari KRS untuk menjaga kejelasan histori perubahan.
 
+## Log 14 — Penyempurnaan Alur Sequence Diagram Pengisian KRS
+
+### Tujuan
+Menyesuaikan alur Sequence Diagram KRS agar mencakup validasi lengkap (prasyarat, SKS, jadwal bentrok, kapasitas kelas), penyimpanan KRS sementara, pembayaran, dan pembuatan data `Enrollment` hanya setelah KRS dan pembayaran dinyatakan valid.
+
+### Perintah (Prompt)
+"Perbarui sequence diagram KRS dengan alur: Mahasiswa buka menu KRS -> Sistem tampilkan matkul/kelas -> Memilih matkul -> Validasi prasyarat, jumlah SKS, jadwal bentrok, kapasitas kelas -> Simpan pilihan KRS sementara -> Hitung tagihan -> Mahasiswa membayar -> Verifikasi pembayaran -> Konfirmasi KRS -> Buat data Enrollment. Pastikan Enrollment tidak dibuat sebelum KRS dan pembayaran valid. Gunakan aktor Mahasiswa, KRS_UI, Course/Kelas, PendaftaranKRS, dan PembayaranKRS."
+
+### Hasil
+- Alur sequence diagram KRS kini memuat validasi komprehensif serta tahapan yang memastikan `Enrollment` tidak dibuat prematur sebelum pembayaran dan KRS divalidasi.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Logika bisnis KRS menjadi sangat akurat dan aman dari inkonsistensi data akademik.
+- **Catatan**: Log ini dibuat terpisah dari PMB untuk dokumentasi yang rapi.
