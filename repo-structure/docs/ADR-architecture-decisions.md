@@ -30,5 +30,8 @@ User dirancang sebagai abstract base class dengan subclass konkret: Mahasiswa, D
 - Kelas berelasi komposit (*--) ke Schedule karena jadwal perkuliahan terikat mutlak dan tidak berdiri sendiri terlepas dari kelas penawarannya.
 
 ## 4. Trade-off yang Dipertimbangkan
-- Kompleksitas Domain: Penambahan entitas Kelas dan pemisahan Pendaftaran meningkatkan jumlah kelas, namun membuat pemodelan jauh lebih akurat dan mendekati sistem akademik riil (Enterprise Academic System).
-- Eliminasi Duplikasi: Penghapusan atribut yang berulang pada subclass mengoptimalkan struktur inheritance.
+
+
+### 3.6 Perancangan Use Case & Batasan Sistem (System Boundary)
+- Aktor Utama: Sistem membedakan secara tegas antara CalonMahasiswa, Mahasiswa, Dosen, dan Admin untuk menjaga prinsip pemisahan wewenang (*separation of concerns*).
+- Subsistem Akademik: Use case dikelompokkan ke dalam fungsionalitas inti (Autentikasi, PMB, KRS, Perkuliahan/Nilai, dan Manajemen Admin) yang langsung merefleksikan relasi objek pada Class Diagram.

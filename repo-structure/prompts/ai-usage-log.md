@@ -564,3 +564,20 @@ Menyempurnakan class diagram berdasarkan code review mendalam:
 
 ### Hasil
 Diagram kelas dan dokumentasi arsitektur kini bersih, terstandarisasi, bebas redundansi, dan akurat secara domain OOP.
+
+## Log 08 — Perancangan Use Case Diagram Sistem Akademik SEVIMA-Mini
+
+### Tujuan
+Merancang Use Case Diagram untuk memetakan interaksi fungsional antara aktor utama (Calon Mahasiswa, Mahasiswa Aktif, Dosen, dan Admin Akademik) dengan subsistem di dalam SEVIMA-Mini (Autentikasi, PMB, KRS & Akademik, Penilaian Dosen, serta Administrasi).
+
+### Perintah (Prompt)
+Buatlah use case diagram berbasis Mermaid (`usecase-diagram.mmd`) yang merefleksikan hierarki kelas dan fungsionalitas sistem akademik SEVIMA-Mini, mencakup alur PMB, KRS, pembayaran, perkuliahan, dan manajemen data.
+
+### Hasil
+- Penambahan aktor utama: CalonMahasiswa, Mahasiswa, Dosen, Admin.
+- Pemetaan use case fungsional: Login/Logout, Pendaftaran PMB & Bayar Invoice PMB, Pengisian KRS & Bayar Invoice KRS, Lihat Jadwal & Nilai, Pengelolaan Nilai oleh Dosen, serta Manajemen User, Course/Kelas, dan Verifikasi oleh Admin.
+- Batasan sistem (`system boundary`) SEVIMA-Mini yang jelas dan konsisten dengan Class Diagram.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Use case diagram memberikan gambaran tingkat tinggi yang selaras dengan domain model OOP yang telah dirancang sebelumnya, memperjelas batasan tanggung jawab setiap aktor.
+- **Catatan**: Diagram ini melengkapi dokumentasi perancangan sistem dan menjadi acuan dalam pembuatan diagram sequence serta kode implementasi.
