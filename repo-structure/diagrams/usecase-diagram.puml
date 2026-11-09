@@ -1,57 +1,73 @@
-@startuml
-left to right direction
+﻿@startuml
 skinparam packageStyle rectangle
 
+actor "User" as User
 actor "Calon Mahasiswa" as CalonMahasiswa
-actor "Mahasiswa Aktif" as Mahasiswa
+actor "Mahasiswa" as Mahasiswa
 actor "Dosen" as Dosen
-actor "Admin Akademik" as Admin
+actor "Admin" as Admin
+
+' Generalization / Inheritance antar Aktor
+User <|-- CalonMahasiswa
+User <|-- Mahasiswa
+User <|-- Dosen
+User <|-- Admin
 
 rectangle "Sistem Informasi Akademik (SEVIMA-Mini)" {
     usecase "Login & Logout" as UC_Auth
     
     ' PMB Use Cases
-    usecase "Pendaftaran PMB" as UC_PMB
-    usecase "Bayar Invoice PMB" as UC_BayarPMB
+    usecase "Mendaftar PMB" as UC_PMB
+    usecase "Membayar PMB" as UC_BayarPMB
     usecase "Cek Status Seleksi" as UC_CekPMB
 
     ' KRS & Academic Use Cases
-    usecase "Isi Kartu Rencana Studi (KRS)" as UC_KRS
-    usecase "Bayar Invoice KRS" as UC_BayarKRS
-    usecase "Lihat Jadwal Kuliah" as UC_Jadwal
-    usecase "Lihat Nilai & KHS" as UC_Nilai
+    usecase "Mengisi KRS" as UC_KRS
+    usecase "Memilih Kelas" as UC_PilihKelas
+    usecase "Membayar KRS" as UC_BayarKRS
+    usecase "Melihat Jadwal Kuliah" as UC_Jadwal
+    usecase "Melihat Nilai" as UC_Nilai
+    usecase "Mencetak KHS" as UC_CetakKHS
 
     ' Dosen Use Cases
-    usecase "Kelola & Input Nilai Mahasiswa" as UC_InputNilai
-    usecase "Lihat Jadwal Mengajar" as UC_JadwalDosen
+    usecase "Menginput Nilai Mahasiswa" as UC_InputNilai
+    usecase "Menghitung Nilai Akhir" as UC_HitungNilai
+    usecase "Melihat Jadwal Mengajar" as UC_JadwalDosen
 
     ' Admin Use Cases
-    usecase "Kelola Data Pengguna" as UC_KelolaUser
-    usecase "Kelola Katalog Course & Kelas" as UC_KelolaCourse
-    usecase "Verifikasi Pembayaran & Pendaftaran" as UC_Verifikasi
+    usecase "Mengelola Data Pengguna" as UC_KelolaUser
+    usecase "Mengelola Mata Kuliah & Kelas" as UC_KelolaCourse
+    usecase "Menetapkan Hasil Seleksi" as UC_SetSeleksi
+    usecase "Memverifikasi Pendaftaran & Pembayaran" as UC_Verifikasi
 }
 
+' User Auth Association
+User --> UC_Auth
+
 ' Calon Mahasiswa associations
-CalonMahasiswa --> UC_Auth
 CalonMahasiswa --> UC_PMB
-CalonMahasiswa --> UC_BayarPMB
 CalonMahasiswa --> UC_CekPMB
 
 ' Mahasiswa associations
-Mahasiswa --> UC_Auth
 Mahasiswa --> UC_KRS
-Mahasiswa --> UC_BayarKRS
 Mahasiswa --> UC_Jadwal
 Mahasiswa --> UC_Nilai
 
 ' Dosen associations
-Dosen --> UC_Auth
 Dosen --> UC_InputNilai
 Dosen --> UC_JadwalDosen
 
 ' Admin associations
-Admin --> UC_Auth
 Admin --> UC_KelolaUser
 Admin --> UC_KelolaCourse
+Admin --> UC_SetSeleksi
 Admin --> UC_Verifikasi
+
+' Include & Extend Relations
+UC_PMB ..> UC_BayarPMB : <<include>>
+UC_KRS ..> UC_PilihKelas : <<include>>
+UC_KRS ..> UC_BayarKRS : <<include>>
+UC_InputNilai ..> UC_HitungNilai : <<include>>
+
+UC_CetakKHS ..> UC_Nilai : <<extend>>
 @enduml

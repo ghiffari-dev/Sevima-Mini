@@ -580,4 +580,58 @@ Buatlah use case diagram berbasis Mermaid (`usecase-diagram.mmd`) yang merefleks
 
 ### Evaluasi (Objektif)
 - **Kelebihan**: Use case diagram memberikan gambaran tingkat tinggi yang selaras dengan domain model OOP yang telah dirancang sebelumnya, memperjelas batasan tanggung jawab setiap aktor.
+
+---
+
+## Log 09 — Refactoring Use Case Diagram & Penerapan Prinsip Generalisasi Aktor
+
+### Tujuan
+Menyempurnakan Use Case Diagram agar selaras dengan best practice perancangan UML:
+1. Menerapkan pewarisan/generalisasi aktor (`User` sebagai base actor untuk Login & Logout, diturunkan ke Calon Mahasiswa, Mahasiswa, Dosen, dan Admin).
+2. Menjaga skala use case di kisaran 12-16 fungsionalitas inti menggunakan frasa kerja (verb-phrase).
+3. Menata ulang relasi `«include»` dan `«extend»` dengan arah panah yang benar (include menunjuk ke use case wajib, extend menunjuk dari use case tambahan ke utama).
+4. Menambahkan use case krusial seperti `Menetapkan Hasil Seleksi` oleh Admin dan `Memilih Kelas` pada KRS.
+
+### Perintah (Prompt)
+"Perbarui use case diagram sistem akademik SEVIMA-Mini dengan ketentuan: 
+- Pertahankan format PlantUML (`.puml`).
+- Terapkan generalisasi aktor dengan base actor `User` untuk fitur Login & Logout.
+- Batasi jumlah use case antara 12-16 fungsionalitas menggunakan frasa kerja.
+- Terapkan relasi `«include»` (Mendaftar PMB -> Membayar PMB, Mengisi KRS -> Memilih Kelas, Menginput Nilai -> Menghitung Nilai Akhir) dan `«extend»` (Mencetak KHS -> Melihat Nilai).
+- Tambahkan aktor Admin dengan use case Menetapkan Hasil Seleksi dan Verifikasi."
+
+### Hasil
+- Penggunaan base actor `User` yang mewariskan fungsionalitas `Login & Logout` ke seluruh aktor turunan.
+- Pemetaan use case terstruktur rapi dengan batasan sistem (`SEVIMA-Mini`) yang jelas.
+- Arah panah relasi `«include»` dan `«extend»` sesuai standar UML.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Diagram menjadi jauh lebih bersih, konsisten dengan konsep *inheritance* pada Class Diagram, serta sangat mudah dibaca dan divalidasi.
+- **Catatan**: Pemodelan ini memberikan gambaran fungsional yang solid sebelum melangkah ke pembuatan Sequence Diagram.
+
 - **Catatan**: Diagram ini melengkapi dokumentasi perancangan sistem dan menjadi acuan dalam pembuatan diagram sequence serta kode implementasi.
+
+## Log 10 — Optimasi Tata Letak PlantUML, Konsistensi Relasi Include KRS, & Standardisasi Penamaan
+
+### Tujuan
+Menyempurnakan kembali Use Case Diagram berdasarkan review mendalam terhadap tata letak, konsistensi relasi, dan standardisasi penamaan OOP:
+1. Menghapus `left to right direction` untuk mencegah garis menyilang akibat tata letak otomatis pada jumlah aktor yang banyak.
+2. Menyamakan konsistensi pembayaran KRS (`Mengisi KRS` meng-include `Membayar KRS`, serupa dengan PMB).
+3. Memisahkan `Melihat Nilai` dan `Mencetak KHS` (di mana `Mencetak KHS` meng-extend `Melihat Nilai`).
+4. Menyelaraskan nama aktor (`Mahasiswa`, `Admin`) dengan Class Diagram serta menyeragamkan konvensi frasa kerja (awalan "Mengelola", `Melihat Jadwal Mengajar`).
+
+### Perintah (Prompt)
+"Perbarui use case diagram sistem akademik SEVIMA-Mini: 
+- Hapus `left to right direction` agar PlantUML mengatur otomatis tata letak vertikal.
+- Tambahkan relasi `UC_KRS ..> UC_BayarKRS : <<include>>` dan hapus garis langsung mahasiswa ke bayar KRS.
+- Ubah 'Melihat Nilai & KHS' menjadi 'Melihat Nilai' dengan relasi `<<extend>>` ke 'Mencetak KHS'.
+- Sesuaikan nama aktor menjadi `Mahasiswa` dan `Admin`, serta pastikan seluruh use case manajemen menggunakan awalan 'Mengelola'."
+
+### Hasil
+- Diagram PlantUML kini lebih bersih dari persilangan garis yang berlebihan.
+- Konsistensi antara alur PMB dan KRS terjaga via relasi `<<include>>`.
+- Penamaan aktor dan use case sepenuhnya selaras dengan struktur Class Diagram.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Model use case menjadi sangat rapi, intuitif, dan memenuhi standar perancangan arsitektur sistem berbasis OOP.
+- **Catatan**: Siap dilanjutkan ke perancangan sequence diagram (PMB & KRS).
