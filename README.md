@@ -38,11 +38,7 @@ repo-structure/
 ## Cara Menjalankan
 
 1. Pastikan Python terinstal.
-2. Jalankan berkas utama, misalnya:
-   ```bash
-   python nama.py
-   ```
-3. Diagram UML dapat dilihat dengan renderer Mermaid (VS Code Mermaid Preview, GitHub, dll.).
+2. Diagram UML dapat dilihat dengan renderer Mermaid dan PlantUML(VS Code Mermaid Preview, GitHub, dll.).
 
 *(Silakan tambahkan instruksi lebih lanjut sesuai implementasi aplikasi yang sudah selesai.)*
 
