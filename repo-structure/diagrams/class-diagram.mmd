@@ -2,6 +2,7 @@
 classDiagram
     direction TB
 
+    %% User Hierarchy (Inheritance - lolos uji "is a")
     class User {
         <<abstract>>
         # String id
@@ -33,6 +34,7 @@ classDiagram
         + submitRegistration()
     }
 
+    %% Core Classes
     class Course {
         - String kode
         - String nama
@@ -61,20 +63,35 @@ classDiagram
         + calculateFinalGrade()
     }
 
-    %% Inheritance (Penerapan OCP & LSP)
+    class Payment {
+        - String idPayment
+        - double jumlah
+        - Date tanggalBayar
+        - String statusBayar
+        + verifyPayment()
+        + generateReceipt()
+    }
+
+    %% Inheritance
     User <|-- Mahasiswa
     User <|-- Dosen
     User <|-- Admin
     User <|-- CalonMahasiswa
 
-    %% Aggregation (Relasi Lemah: Jadwal atau Prasyarat bisa eksis terpisah dari Course)
-    Course o-- Schedule : memiliki jadwal
-    Course "*" o-- "*" Course : prasyarat
+    %% Aggregation (relasi lemah)
+    Course "1" o-- "*" Schedule : memiliki
+    Dosen "1" o-- "*" Schedule : mengajar
+    Course "1" o-- "*" Course : prasyaratUntuk
+    Course "*" o-- "1" Course : prasyaratDari
 
-    %% Composition (Relasi Kuat: Grade tidak memiliki siklus hidup mandiri tanpa Enrollment)
-    Enrollment *-- Grade : mencakup
-
-    %% Associations
+    %% Association (bukan composition untuk Grade - nilai akademik bersifat permanen)
+    Enrollment "1" --> "0..1" Grade : memiliki
     Mahasiswa "1" --> "*" Enrollment : melakukan
-    Course "1" --> "*" Enrollment : memiliki
+    Course "1" --> "*" Enrollment : dimilikiOleh
+    Dosen "1" --> "*" Course : mengajar
+
+    %% Payment relationships
+    Mahasiswa "1" --> "*" Payment : melakukan
+    CalonMahasiswa "1" --> "*" Payment : melakukan
+    Payment "1" --> "1" Enrollment : untuk
 ```
