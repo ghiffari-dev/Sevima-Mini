@@ -6,9 +6,9 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 
 - **Manajemen pengguna (User):** Mahasiswa, Dosen, Admin, dan Calon Mahasiswa dengan sistem autentikasi (login/logout). `User` dirancang sebagai abstract base class.
 - **Manajemen mata kuliah (Course):** kode, nama, SKS, dan daftar prasyarat.
-- **Pendaftaran Mahasiswa Baru (PMB):** melalui kelas `CalonMahasiswa`.
-- **Pengisian KRS:** melalui `Enrollment` yang menghubungkan `Mahasiswa` dan `Course`.
-- **Penjadwalan kuliah (Schedule):** hari, jam, dan ruangan.
+- **Pendaftaran Mahasiswa Baru (PMB):** melalui kelas `CalonMahasiswa` dan `PendaftaranPMB`, dengan pemisahan proses antara pembayaran dan verifikasi hasil seleksi oleh `Admin`.
+- **Pengisian KRS:** melalui `PendaftaranKRS` dan `Enrollment` yang menghubungkan `Mahasiswa` dan `Course`, dilengkapi validasi komprehensif (prasyarat, SKS, jadwal, kapasitas) serta *deferred enrollment* setelah pembayaran lunas.
+- **Penjadwalan kuliah (Schedule):** hari, jam, dan ruangan (berelasi komposit dengan `Kelas`).
 - **Pencatatan nilai (Grade):** nilai angka, nilai huruf, dan bobot, terkait komposisi dengan `Enrollment`.
 - **Desain berbasis prinsip SOLID** (terutama Open/Closed Principle dan Liskov Substitution Principle).
 - **Relasi antar kelas** menggunakan Aggregation (relasi lemah) dan Composition (relasi kuat).
@@ -18,28 +18,28 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 ```
 repo-structure/
 ├── diagrams/
-│   ├── class-diagram.mmd     # Diagram kelas UML (Mermaid)
-│   ├── usecase-diagram.puml   # Diagram use case UML (PlantUML)
-│   ├── sequence-krs.mmd      # Diagram sekuens KRS (Mermaid)
-│   └── sequence-pmb.mmd      # Diagram sekuens PMB (Mermaid)
+│   ├── class-diagram.mmd        # Diagram kelas UML (Mermaid)
+│   ├── usecase-diagram.puml     # Diagram use case UML (PlantUML)
+│   ├── sequence-krs.mmd         # Diagram sekuens KRS (Mermaid)
+│   └── sequence-pmb.mmd         # Diagram sekuens PMB (Mermaid)
 ├── docs/
+│   ├── ADR-architecture-decisions.md # Keputusan Arsitektur Sistem (ADR-001)
 │   ├── ADR-architecture-decisions.pdf
 │   └── Final-UML-diagram.pdf
 └── prompts/
-    └── ai-usage-log.md       # Catatan penggunaan AI selama perancangan
+    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan
 ```
 
 ## Teknologi & Tools
 
-- Bahasa pemrograman: Python (contoh berkas: `nama.py`)
+- Bahasa pemrograman: Python
 - **Diagrams:** Mermaid (`.mmd`) untuk Class Diagram & Sequence Diagram, PlantUML (`.puml`) untuk Use Case Diagram
-- Dokumentasi: Markdown, PDF
+- Dokumentasi & Arsitektur: Markdown, PDF, Architecture Decision Records (ADR)
 
-## Cara Menjalankan
+## Cara Menjalankan & Melihat
 
-1. Pastikan Python terinstal.
-2. Diagram UML dapat dilihat dengan renderer Mermaid dan PlantUML(VS Code Mermaid Preview, GitHub, dll.).
-
+1. Pastikan lingkungan Python terinstal.
+2. Diagram UML dapat dilihat menggunakan renderer Mermaid (`.mmd`) dan PlantUML (`.puml`) di VS Code (PlantUML/Mermaid Preview) atau GitHub.
 
 ## Lisensi
 
