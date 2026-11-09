@@ -1,5 +1,5 @@
-# AI Usage Log (Log Penggunaan AI)
-## Log 01 — Diagram Kelas Awal
+﻿# AI Usage Log (Log Penggunaan AI)
+## Log 01 â€” Diagram Kelas Awal
 
 ### Tujuan
 Menghasilkan Diagram Kelas UML awal untuk sistem informasi akademik seperti SEVIMA-Mini.
@@ -97,7 +97,7 @@ classDiagram
 
 ### Evaluasi
 1. Kelas Payment (Pembayaran) belum ada dalam diagram awal.
-2. Beberapa relasi, khususnya antara Course–Schedule dan Enrollment–Grade, memerlukan validasi lebih lanjut.
+2. Beberapa relasi, khususnya antara Courseâ€“Schedule dan Enrollmentâ€“Grade, memerlukan validasi lebih lanjut.
 3. Multiplisitas perlu diperiksa kembali.
 4. Visibilitas sudah dicantumkan, namun memerlukan pemeriksaan konsistensi.
 5. Prinsip-prinsip SOLID belum terlihat secara memadai hanya dari diagram tersebut.
@@ -107,7 +107,7 @@ Untuk meningkatkan ketepatan dan kelengkapan UML, serta memastikan kesesuaian de
 
 ---
 
-## Log 02 — Revisi Class Diagram (Prompt Ke-2)
+## Log 02 â€” Revisi Class Diagram (Prompt Ke-2)
 
 ### Tujuan
 Memperbaiki dan menyempurnakan class diagram awal berdasarkan hasil validasi output AI (video PBO minggu 01: "Jangan percaya, periksa") dan menambahkan class Payment yang hilang dari diagram pertama.
@@ -223,32 +223,32 @@ classDiagram
 
 | Aturan | Status | Keterangan |
 |--------|--------|------------|
-| Inheritance masuk akal (uji "is a") | ✅ Lulus | Mahasiswa/Dosen/Admin/CalonMahasiswa is a User. Tidak ada inheritance aneh. |
-| Tidak ada circular dependency | ✅ Lulus | Tidak ada siklus Course → Schedule → Dosen → Course. Self-referensi Course (prasyarat) tidak berbahaya. |
-| Kardinalitas benar | ✅ Lulus | Multiplicity ditambahkan pada semua relasi (1, *, 0..1). |
-| Semua atribut memiliki visibility | ✅ Lulus | Semua atribut pakai `-` (private), `User` pakai `#` (protected). |
-| Aggregation vs Composition tepat | ✅ Diperbaiki | `Enrollment *-- Grade` diubah jadi association (`--`) karena nilai akademik bersifat permanen. |
-| Tidak ada god object | ✅ Lulus | Setiap class hanya 1–3 method. |
-| Class relevan dengan requirement | ✅ Lulus | Semua class termasuk Payment relevan sistem akademik. |
+| Inheritance masuk akal (uji "is a") | âœ… Lulus | Mahasiswa/Dosen/Admin/CalonMahasiswa is a User. Tidak ada inheritance aneh. |
+| Tidak ada circular dependency | âœ… Lulus | Tidak ada siklus Course â†’ Schedule â†’ Dosen â†’ Course. Self-referensi Course (prasyarat) tidak berbahaya. |
+| Kardinalitas benar | âœ… Lulus | Multiplicity ditambahkan pada semua relasi (1, *, 0..1). |
+| Semua atribut memiliki visibility | âœ… Lulus | Semua atribut pakai `-` (private), `User` pakai `#` (protected). |
+| Aggregation vs Composition tepat | âœ… Diperbaiki | `Enrollment *-- Grade` diubah jadi association (`--`) karena nilai akademik bersifat permanen. |
+| Tidak ada god object | âœ… Lulus | Setiap class hanya 1â€“3 method. |
+| Class relevan dengan requirement | âœ… Lulus | Semua class termasuk Payment relevan sistem akademik. |
 
 ### Perubahan dari Log 01 ke Log 02
 
-1. **Tambahan class Payment** — idPayment, jumlah, tanggalBayar, statusBayar, verifyPayment(), generateReceipt().
-2. **Visibility konsisten** — Semua atribut dan method diberi simbol `+`, `-`, atau `#`.
-3. **Multiplicity ditambahkan** — Semua relasi memiliki kardinalitas (1, *, 0..1).
-4. **Grade diubah dari composition menjadi association** — `Enrollment *-- Grade` menjadi `Enrollment "1" --> "0..1" Grade`, karena nilai akademik tidak boleh hilang saat enrollment dihapus.
-5. **Relasi baru ditambahkan** — `Dosen o-- Schedule` (mengajar), `Dosen --> Course` (mengajar), `CalonMahasiswa --> Payment` (PMB), `Payment --> Enrollment` (untuk).
-6. **Role name pada self-referensi Course** — `prasyaratUntuk` dan `prasyaratDari` agar tidak ambigu.
+1. **Tambahan class Payment** â€” idPayment, jumlah, tanggalBayar, statusBayar, verifyPayment(), generateReceipt().
+2. **Visibility konsisten** â€” Semua atribut dan method diberi simbol `+`, `-`, atau `#`.
+3. **Multiplicity ditambahkan** â€” Semua relasi memiliki kardinalitas (1, *, 0..1).
+4. **Grade diubah dari composition menjadi association** â€” `Enrollment *-- Grade` menjadi `Enrollment "1" --> "0..1" Grade`, karena nilai akademik tidak boleh hilang saat enrollment dihapus.
+5. **Relasi baru ditambahkan** â€” `Dosen o-- Schedule` (mengajar), `Dosen --> Course` (mengajar), `CalonMahasiswa --> Payment` (PMB), `Payment --> Enrollment` (untuk).
+6. **Role name pada self-referensi Course** â€” `prasyaratUntuk` dan `prasyaratDari` agar tidak ambigu.
 
 ### Alasan Revisi
-Hasil AI awal memiliki kekurangan: class Payment hilang, visibility tidak konsisten pada semua elemen, cardinality belum lengkap, composition Grade terlalu kuat (tidak sesuai domain akademik), dan relasi Dosen–Course/Schedule belum tercakup. Revisi dilakukan untuk menyelaraskan diagram dengan konsep UML yang benar dan requirement tugas.
+Hasil AI awal memiliki kekurangan: class Payment hilang, visibility tidak konsisten pada semua elemen, cardinality belum lengkap, composition Grade terlalu kuat (tidak sesuai domain akademik), dan relasi Dosenâ€“Course/Schedule belum tercakup. Revisi dilakukan untuk menyelaraskan diagram dengan konsep UML yang benar dan requirement tugas.
 
 ---
 
-## Log 03 — Verifikasi dan Sempurnaan Class Diagram (Prompt Ke-3)
+## Log 03 â€” Verifikasi dan Sempurnaan Class Diagram (Prompt Ke-3)
 
 ### Tujuan
-Memverifikasi dan menyempurnakan class diagram berdasarkan 6 poin analisis revisi: (1) Grade diubah dari composition menjadi association, (2) relasi Dosen → Course dan Dosen o-- Schedule ditambahkan, (3) relasi CalonMahasiswa → Payment ditambahkan, (4) kardinalitas Payment diubah dari 0..1 menjadi 1, (5) role name ditambahkan pada self-referensi Course o-- Course, dan (6) semua atribut dan method diberi simbol visibility (+, -, #).
+Memverifikasi dan menyempurnakan class diagram berdasarkan 6 poin analisis revisi: (1) Grade diubah dari composition menjadi association, (2) relasi Dosen â†’ Course dan Dosen o-- Schedule ditambahkan, (3) relasi CalonMahasiswa â†’ Payment ditambahkan, (4) kardinalitas Payment diubah dari 0..1 menjadi 1, (5) role name ditambahkan pada self-referensi Course o-- Course, dan (6) semua atribut dan method diberi simbol visibility (+, -, #).
 
 ### Perintah (Prompt)
 Sebagai senior software architect, verifikasi dan perbaiki class diagram UML untuk sistem akademik SEVIMA-Mini dengan aturan berikut:
@@ -365,22 +365,22 @@ classDiagram
 
 | No | Poin Analisis | Status | Keterangan |
 |----|--------------|--------|------------|
-| 1 | Grade diubah dari composition (`*--`) menjadi association (`--`) | ✅ Terpenuhi | `Enrollment "1" --> "0..1" Grade` — nilai akademik bersifat permanen. |
-| 2 | Relasi `Dosen --> Course` dan `Dosen o-- Schedule` ditambahkan | ✅ Terpenuhi | `Dosen "1" --> "*" Course : mengajar` dan `Dosen "1" o-- "*" Schedule : mengajar`. |
-| 3 | Relasi `CalonMahasiswa --> Payment` ditambahkan | ✅ Terpenuhi | `CalonMahasiswa "1" --> "*" Payment : melakukan`. |
-| 4 | Kardinalitas Payment diubah dari `0..1` menjadi `1` | ✅ Terpenuhi | `Payment "1" --> "1" Enrollment : untuk`. |
-| 5 | Role name pada self-referensi `Course o-- Course` | ✅ Terpenuhi | `prasyaratUntuk` dan `prasyaratDari`. |
-| 6 | Semua atribut dan method memiliki visibility (`+`, `-`, `#`) | ✅ Terpenuhi | Atribut `-`, method `+`, atribut `User` `#`. |
+| 1 | Grade diubah dari composition (`*--`) menjadi association (`--`) | âœ… Terpenuhi | `Enrollment "1" --> "0..1" Grade` â€” nilai akademik bersifat permanen. |
+| 2 | Relasi `Dosen --> Course` dan `Dosen o-- Schedule` ditambahkan | âœ… Terpenuhi | `Dosen "1" --> "*" Course : mengajar` dan `Dosen "1" o-- "*" Schedule : mengajar`. |
+| 3 | Relasi `CalonMahasiswa --> Payment` ditambahkan | âœ… Terpenuhi | `CalonMahasiswa "1" --> "*" Payment : melakukan`. |
+| 4 | Kardinalitas Payment diubah dari `0..1` menjadi `1` | âœ… Terpenuhi | `Payment "1" --> "1" Enrollment : untuk`. |
+| 5 | Role name pada self-referensi `Course o-- Course` | âœ… Terpenuhi | `prasyaratUntuk` dan `prasyaratDari`. |
+| 6 | Semua atribut dan method memiliki visibility (`+`, `-`, `#`) | âœ… Terpenuhi | Atribut `-`, method `+`, atribut `User` `#`. |
 
 ### Alasan Revisi
-Semua 6 poin analisis telah diterapkan pada `class-diagram.mmd`. Tidak ada perubahan struktural tambahan yang diperlukan karena diagram saat ini sudah mencakup seluruh requirement: inheritance User, class Payment, visibility lengkap, multiplicity semua relasi, composition vs association yang tepat, dan relasi Dosen–Course/Schedule.
+Semua 6 poin analisis telah diterapkan pada `class-diagram.mmd`. Tidak ada perubahan struktural tambahan yang diperlukan karena diagram saat ini sudah mencakup seluruh requirement: inheritance User, class Payment, visibility lengkap, multiplicity semua relasi, composition vs association yang tepat, dan relasi Dosenâ€“Course/Schedule.
 
 ---
 
-## Log 04 — Mengubah Enrollment dan Grade menjadi Composition
+## Log 04 â€” Mengubah Enrollment dan Grade menjadi Composition
 
 ### Tujuan
-Mengubah relasi Enrollment ↔ Grade dari association (`--`) menjadi composition (`*--`) berdasarkan keputusan bahwa Grade adalah objek bagian yang tidak dapat berdiri sendiri tanpa Enrollment sebagai objek induk.
+Mengubah relasi Enrollment â†” Grade dari association (`--`) menjadi composition (`*--`) berdasarkan keputusan bahwa Grade adalah objek bagian yang tidak dapat berdiri sendiri tanpa Enrollment sebagai objek induk.
 
 ### Perintah (Prompt)
 Ubah relasi Enrollment dan Grade pada class diagram UML SEVIMA-Mini menjadi composition dengan aturan:
@@ -501,6 +501,29 @@ classDiagram
 | Siklus hidup | Grade terikat Enrollment | Jika enrollment dihapus, grade ikut terhapus |
 
 ### Alasan Revisi
-Sebelumnya Enrollment → Grade menggunakan association karena dianggap nilai akademik bersifat permanen. Setelah evaluasi ulang, keputusan akhir adalah composition karena Grade adalah objek bagian yang hanya bermakna dalam konteks Enrollment. Semua relasi lain (inheritance, aggregation, association, visibility, multiplicity) tetap terpelihara.
+Sebelumnya Enrollment â†’ Grade menggunakan association karena dianggap nilai akademik bersifat permanen. Setelah evaluasi ulang, keputusan akhir adalah composition karena Grade adalah objek bagian yang hanya bermakna dalam konteks Enrollment. Semua relasi lain (inheritance, aggregation, association, visibility, multiplicity) tetap terpelihara.
 
 ---
+---
+
+## Log 05 — Refactoring dan Penyempurnaan Berdasarkan Review Arsitektur
+
+### Tujuan
+Melakukan *refactoring* menyeluruh pada *class diagram* berdasarkan *code review* profesional, mencakup penambahan kelas Kelas (untuk pemisahan katalog mata kuliah dengan kelas penawaran semester), penerapan polimorfisme pada hirarki User, konsistensi visibilitas kelas abstrak (#), komposisi Kelas ke Schedule, serta perbaikan format file Mermaid (.mmd).
+
+### Perintah (Prompt)
+Refaktor class diagram UML sistem akademik SEVIMA-Mini dengan ketentuan berikut:
+1. Tambahkan class Kelas sebagai perantara antara katalog Course dan pelaksanaan di semester (mengatasi keterbatasan *Course* murni sebagai katalog).
+2. Terapkan polimorfisme dengan mengubah method spesifik (getMahasiswaInfo, getDosenInfo) menjadi method abstrak getInfo() di User yang di-*override* di setiap *subclass*.
+3. Konsistensikan visibilitas atribut pada *abstract class* (User, Pendaftaran, Payment) menggunakan # (protected).
+4. Ubah relasi Kelas ke Schedule menjadi composition (*--) karena jadwal melekat erat pada kelas perkuliahan.
+5. Pastikan format file .mmd bersih dari tag `mermaid markdown agar dapat dirender dengan benar.
+
+### Hasil (Refactored Diagram)
+- Penambahan class Kelas dengan relasi Course "1" o-- "*" Kelas dan Kelas "1" *-- "*" Schedule.
+- Pembaruan method getInfo() di semua subclass User.
+- Konsistensi visibilitas # pada User, Pendaftaran, dan Payment.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Model domain kini jauh lebih mendekati sistem akademik nyata (adanya pemisahan katalog Course dan instance Kelas per semester). Polimorfisme pada getInfo() dan konsistensi visibilitas membuat struktur OOP lebih bersih dan mematuhi prinsip enkapsulasi.
+- **Kekurangan / Kompleksitas Tambahan**: Penambahan class Kelas menambah kompleksitas relasi KRS (Enrollment kini menunjuk ke Kelas, bukan langsung ke Course). Namun, hal ini merupakan trade-off yang wajar dan diperlukan untuk sistem akademik riil.

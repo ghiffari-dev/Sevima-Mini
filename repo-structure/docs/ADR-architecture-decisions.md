@@ -30,9 +30,13 @@ Digunakan **self-referensi aggregation** dengan role name.
 - **Multiplicity:** `Course "1" o-- "*" Course : prasyaratUntuk` dan `Course "*" o-- "1" Course : prasyaratDari`.
 
 ### 3.5 Class Payment
-Ditambahkan sebagai class mandiri dengan atribut: `idPayment`, `jumlah`, `tanggalBayar`, `statusBayar`; dan method: `verifyPayment()`, `generateReceipt()`.
-- **Relasi:** `Mahasiswa "1" --> "*" Payment`, `CalonMahasiswa "1" --> "*" Payment`, `Payment "1" --> "1" Enrollment`.
-- **Alasan:** Pembayaran terkait KRS (mahasiswa) dan pendaftaran PMB (calon mahasiswa). Setiap pembayaran harus terkait minimal satu enrollment.
+`Payment` dirancang sebagai **abstract base class** dengan dua subclass konkret:
+- `PembayaranPMB`: untuk pendaftaran mahasiswa baru, terkait `CalonMahasiswa`, atribut `noPendaftaran`, `tanggalPendaftaran`.
+- `PembayaranKRS`: untuk pengisian KRS, terkait `Mahasiswa` dan `Enrollment` (1→1), atribut `idEnrollment`, `jumlahKRS`.
+
+- **Relasi:** `CalonMahasiswa "1" --> "*" PembayaranPMB`, `Mahasiswa "1" --> "*" PembayaranKRS`, `PembayaranKRS "1" --> "1" Enrollment`.
+- **Alasan:** Memisahkan concern pembayaran PMB dan KRS agar lebih akurat domainnya. Pembayaran PMB tidak memerlukan enrollment karena calon mahasiswa baru belum daftar kuliah, sedangkan pembayaran KRS wajib terkait satu enrollment.
+- **Prinsip SOLID:** Single Responsibility Principle (SRP) — setiap subclass pembayaran hanya menangani satu jenis transaksi.
 
 ### 3.6 Visibility Modifier
 Semua atribut diberi visibilitas `-` (private), semua method diberi `+` (public), dan atribut di `User` (abstract) diberi `#` (protected).

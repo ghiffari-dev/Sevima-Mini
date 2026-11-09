@@ -1,8 +1,7 @@
-```mermaid
-classDiagram
+﻿classDiagram
     direction TB
 
-    %% User Hierarchy (Inheritance - lolos uji "is a")
+    %% User Hierarchy (Polymorphism via getInfo override)
     class User {
         <<abstract>>
         # String id
@@ -10,31 +9,32 @@ classDiagram
         # String email
         + login()
         + logout()
+        + getInfo()*
     }
 
     class Mahasiswa {
         - String nim
         - String jurusan
-        + getMahasiswaInfo()
+        + getInfo()
     }
 
     class Dosen {
         - String nip
         - String keahlian
-        + getDosenInfo()
+        + getInfo()
     }
 
     class Admin {
         - String role
-        + manageSystem()
+        + getInfo()
     }
 
     class CalonMahasiswa {
         - String noPendaftaran
-        + submitRegistration()
+        + getInfo()
     }
 
-    %% Core Classes
+    %% Academic Catalog & Offering
     class Course {
         - String kode
         - String nama
@@ -42,11 +42,12 @@ classDiagram
         + getCourseDetails()
     }
 
-    class Enrollment {
-        - String idEnrollment
-        - Date tanggalDaftar
-        - String status
-        + processEnrollment()
+    class Kelas {
+        - String idKelas
+        - String namaKelas
+        - String semester
+        - int kapasitas
+        + getKelasInfo()
     }
 
     class Schedule {
@@ -56,6 +57,13 @@ classDiagram
         + updateSchedule()
     }
 
+    class Enrollment {
+        - String idEnrollment
+        - Date tanggalDaftar
+        - String status
+        + processEnrollment()
+    }
+
     class Grade {
         - double nilaiAngka
         - String nilaiHuruf
@@ -63,13 +71,47 @@ classDiagram
         + calculateFinalGrade()
     }
 
+    %% Pendaftaran Hierarchy
+    class Pendaftaran {
+        <<abstract>>
+        # String idPendaftaran
+        # Date tanggalDaftar
+        # String status
+        + submitPendaftaran()
+        + getStatus()
+    }
+
+    class PendaftaranPMB {
+        - String noPendaftaran
+        - String pilihanJurusan
+        + verifikasiPMB()
+    }
+
+    class PendaftaranKRS {
+        - String idEnrollment
+        - int totalSks
+        + prosesKRS()
+    }
+
+    %% Payment Hierarchy
     class Payment {
-        - String idPayment
-        - double jumlah
-        - Date tanggalBayar
-        - String statusBayar
+        <<abstract>>
+        # String idPayment
+        # double jumlah
+        # Date tanggalBayar
+        # String statusBayar
         + verifyPayment()
         + generateReceipt()
+    }
+
+    class PembayaranPMB {
+        - Date tanggalPendaftaran
+        + buatInvoicePMB()
+    }
+
+    class PembayaranKRS {
+        - double jumlahKRS
+        + buatInvoiceKRS()
     }
 
     %% Inheritance
@@ -77,21 +119,24 @@ classDiagram
     User <|-- Dosen
     User <|-- Admin
     User <|-- CalonMahasiswa
+    Pendaftaran <|-- PendaftaranPMB
+    Pendaftaran <|-- PendaftaranKRS
+    Payment <|-- PembayaranPMB
+    Payment <|-- PembayaranKRS
 
-    %% Aggregation (relasi lemah)
-    Course "1" o-- "*" Schedule : memiliki
-    Dosen "1" o-- "*" Schedule : mengajar
+    %% Relationships & Cardinalities
+    Course "1" o-- "*" Kelas : katalogKelas
+    Kelas "1" *-- "*" Schedule : memilikiJadwal
+    Dosen "1" --> "*" Kelas : mengajar
     Course "1" o-- "*" Course : prasyaratUntuk
     Course "*" o-- "1" Course : prasyaratDari
 
-    %% Composition (relasi kuat: Grade bergantung pada Enrollment)
-    Enrollment "1" *-- "0..1" Grade : memiliki
     Mahasiswa "1" --> "*" Enrollment : melakukan
-    Course "1" --> "*" Enrollment : dimilikiOleh
-    Dosen "1" --> "*" Course : mengajar
+    Kelas "1" --> "*" Enrollment : menampung
+    Enrollment "1" *-- "0..1" Grade : memilikiNilai
 
-    %% Payment relationships
-    Mahasiswa "1" --> "*" Payment : melakukan
-    CalonMahasiswa "1" --> "*" Payment : melakukan
-    Payment "1" --> "1" Enrollment : untuk
-```
+    CalonMahasiswa "1" --> "1" PendaftaranPMB : melakukan
+    Mahasiswa "1" --> "*" PendaftaranKRS : melakukan
+    PendaftaranKRS "1" --> "1" Enrollment : menghasilkan
+    PendaftaranPMB "1" --> "1" PembayaranPMB : memerlukan
+    PendaftaranKRS "1" --> "1" PembayaranKRS : memerlukan

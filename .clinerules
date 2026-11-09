@@ -1,0 +1,6 @@
+# Aturan Efisiensi Memori untuk Cline
+
+1. Jangan membaca seluruh isi file kode jika hanya ingin melakukan perubahan kecil. Cukup minta baris kode yang relevan saja.
+2. Hindari membaca log terminal secara berlengkap-lengkap kecuali diminta secara eksplisit untuk debugging error.
+3. Selalu berikan jawaban yang padat, langsung pada inti kode, dan kurangi penjelasan teori yang terlalu panjang untuk menghemat token percakapan.
+4. Jika tugas saat ini sudah selesai, ingatkan pengguna untuk membuka "New Task" agar memori tetap bersih.
