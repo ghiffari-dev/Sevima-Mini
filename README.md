@@ -40,7 +40,6 @@ repo-structure/
 1. Pastikan Python terinstal.
 2. Diagram UML dapat dilihat dengan renderer Mermaid dan PlantUML(VS Code Mermaid Preview, GitHub, dll.).
 
-*(Silakan tambahkan instruksi lebih lanjut sesuai implementasi aplikasi yang sudah selesai.)*
 
 ## Lisensi
 
