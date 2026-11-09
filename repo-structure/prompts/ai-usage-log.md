@@ -635,3 +635,36 @@ Menyempurnakan kembali Use Case Diagram berdasarkan review mendalam terhadap tat
 ### Evaluasi (Objektif)
 - **Kelebihan**: Model use case menjadi sangat rapi, intuitif, dan memenuhi standar perancangan arsitektur sistem berbasis OOP.
 - **Catatan**: Siap dilanjutkan ke perancangan sequence diagram (PMB & KRS).
+
+## Log 11 — Perancangan Sequence Diagram Pendaftaran Mahasiswa Baru (PMB)
+
+### Tujuan
+Membuat versi awal Sequence Diagram untuk alur Pendaftaran Mahasiswa Baru (PMB) menggunakan Mermaid, yang menggambarkan interaksi antara `Calon Mahasiswa`, `Portal PMB UI`, `PendaftaranPMB`, `PembayaranPMB`, dan `Admin`.
+
+### Perintah (Prompt)
+"Buat sequence diagram Mermaid untuk alur Pendaftaran Mahasiswa Baru (PMB) dengan aktor Calon Mahasiswa, Portal PMB UI, PendaftaranPMB, PembayaranPMB, dan Admin. Sertakan alur pendaftaran, pembuatan tagihan, pembayaran, verifikasi admin, hingga penetapan status diterima."
+
+### Hasil
+- Diagram urutan (*sequence*) berbasis Mermaid dengan nomor otomatis (`autonumber`).
+- Pemetaan alur interaksi yang selaras dengan kelas `CalonMahasiswa`, `PendaftaranPMB`, dan `PembayaranPMB` pada Class Diagram.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Alur proses pendaftaran awal tergambar dengan jelas dan runtut.
+- **Catatan**: Menjadi dasar bagi proses validasi pendaftaran sebelum mahasiswa memasuki tahap KRS.
+
+## Log 12 — Perancangan Sequence Diagram Pengisian Kartu Rencana Studi (KRS)
+
+### Tujuan
+Membuat versi awal Sequence Diagram untuk alur Pengisian Kartu Rencana Studi (KRS) menggunakan Mermaid, yang mencakup interaksi `Mahasiswa Aktif`, `Portal Akademik UI`, `Course/Kelas`, `PendaftaranKRS`, dan `PembayaranKRS`.
+
+### Perintah (Prompt)
+"Buat sequence diagram Mermaid untuk alur pengisian KRS oleh Mahasiswa Aktif, mencakup pemilihan mata kuliah, validasi SKS/prasyarat oleh PendaftaranKRS, pembayaran KRS melalui PembayaranKRS, hingga pembentukan objek Enrollment."
+
+### Hasil
+- Diagram urutan (*sequence*) berbasis Mermaid yang merepresentasikan proses KRS secara lengkap.
+- Keterkaitan langsung antara pemilihan kelas, validasi, pembayaran, dan pembuatan `Enrollment`.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Menggambarkan siklus akademik operasional setelah mahasiswa diterima.
+- **Catatan**: Kedua file log PMB dan KRS dipisahkan sesuai permintaan untuk menjaga kerapian dokumentasi histori AI.
+

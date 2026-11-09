@@ -1,2 +1,34 @@
 %% Sequence Diagram - Kartu Rencana Studi (KRS)
-%% Tempatkan sequence diagram KRS Mermaid di sini
+sequenceDiagram
+    autonumber
+    actor Mahasiswa as Mahasiswa Aktif
+    participant UI as Portal Akademik UI
+    participant Course as Course / Kelas
+    participant KRS as PendaftaranKRS
+    participant Payment as PembayaranKRS
+
+    Mahasiswa->>UI: Membuka menu pengisian KRS
+    UI->>Course: getCourseDetails() & getKelasInfo()
+    activate Course
+    Course-->>UI: Menampilkan daftar mata kuliah & jadwal
+    deactivate Course
+
+    UI-->>Mahasiswa: Menampilkan pilihan kelas
+    Mahasiswa->>KRS: Memilih mata kuliah & kelas (prosesKRS)
+    activate KRS
+    KRS->>KRS: Validasi SKS maksimum & prasyarat
+    KRS-->>UI: Menghasilkan rekap KRS & Tagihan Pembayaran
+    deactivate KRS
+
+    UI-->>Mahasiswa: Menampilkan tagihan pembayaran KRS
+    Mahasiswa->>Payment: Melakukan pembayaran KRS (buatInvoiceKRS)
+    activate Payment
+    Payment->>Payment: verifyPayment()
+    Payment-->>Mahasiswa: Konfirmasi pembayaran KRS sukses
+    deactivate Payment
+
+    Payment->>KRS: Konfirmasi lunas
+    activate KRS
+    KRS->>KRS: Menghasilkan Enrollment & Grade (kosong)
+    KRS-->>Mahasiswa: KRS resmi disetujui & tercatat di sistem
+    deactivate KRS

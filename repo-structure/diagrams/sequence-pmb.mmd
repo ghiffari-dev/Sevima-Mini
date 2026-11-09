@@ -1,2 +1,29 @@
 %% Sequence Diagram - Pendaftaran Mahasiswa Baru (PMB)
-%% Tempatkan sequence diagram PMB Mermaid di sini
+sequenceDiagram
+    autonumber
+    actor CalonMahasiswa as Calon Mahasiswa
+    participant UI as Portal PMB UI
+    participant Pendaftaran as PendaftaranPMB
+    participant Payment as PembayaranPMB
+    participant Admin as Admin Akademik
+
+    CalonMahasiswa->>UI: Mengakses form pendaftaran & mengisi data diri
+    UI->>Pendaftaran: submitPendaftaran(pilihanJurusan)
+    activate Pendaftaran
+    Pendaftaran-->>UI: Menghasilkan ID Pendaftaran & Invoice Tagihan
+    deactivate Pendaftaran
+
+    UI-->>CalonMahasiswa: Menampilkan tagihan pembayaran PMB
+    CalonMahasiswa->>Payment: Melakukan pembayaran biaya PMB
+    activate Payment
+    Payment->>Payment: verifikasiPayment()
+    Payment-->>CalonMahasiswa: Konfirmasi pembayaran berhasil
+    deactivate Payment
+
+    Admin->>Pendaftaran: verifikasiPMB(idPendaftaran)
+    activate Pendaftaran
+    Pendaftaran->>Pendaftaran: Update status seleksi "Diterima"
+    Pendaftaran-->>Admin: Notifikasi verifikasi selesai
+    deactivate Pendaftaran
+
+    Admin-->>CalonMahasiswa: Mengirimkan pengumuman & Akun Mahasiswa
