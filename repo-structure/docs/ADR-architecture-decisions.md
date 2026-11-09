@@ -56,6 +56,7 @@ Semua atribut diberi visibilitas `-` (private), semua method diberi `+` (public)
 - Diagram kelas sekarang mencakup 9 class dengan visibility lengkap dan multiplicity pada semua relasi.
 - Tidak ada circular dependency yang terdeteksi.
 - Semua relasi sudah diverifikasi terhadap konsep UML (inheritance, aggregation, association) tanpa composition yang tidak tepat.
+- Semua 6 poin analisis revisi (Prompt Ke-3 / Log 03) telah diterapkan: Grade sebagai association, relasi Dosen–Course/Schedule, relasi CalonMahasiswa–Payment, kardinalitas Payment 1→1, role name self-referensi Course, dan visibility lengkap.
 - Siap untuk dilanjutkan ke Use Case Diagram dan Sequence Diagram (tahap berikutnya).
 
 ---
