@@ -14,9 +14,9 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML yang m
 - **Prinsip SOLID:** Open/Closed Principle (OCP) — tipe pengguna baru dapat ditambahkan tanpa mengubah `User`; Liskov Substitution Principle (LSP) — semua subclass dapat diperlakukan sebagai `User`.
 
 ### 3.2 Relasi Enrollment ↔ Grade
-Digunakan **association** (`--`), bukan composition (`*--`).
-- **Alasan:** Nilai akademik adalah catatan permanen. Jika enrollment dihapus (mis. mahasiswa mencabut KRS), nilai yang sudah tercatat tidak boleh hilang sepenuhnya.
-- **Multiplicity:** `Enrollment "1" --> "0..1" Grade` — satu enrollment mungkin belum memiliki nilai, satu nilai milik satu enrollment.
+Digunakan **composition** (`*--`).
+- **Alasan:** Grade adalah objek bagian yang tidak dapat berdiri sendiri tanpa Enrollment sebagai objek induk. Satu enrollment dapat memiliki nol atau satu grade.
+- **Multiplicity:** `Enrollment "1" *-- "0..1" Grade` — satu enrollment mungkin belum memiliki nilai, satu nilai milik satu enrollment.
 
 ### 3.3 Relasi Course ↔ Schedule
 Digunakan **aggregation** (`o--`).

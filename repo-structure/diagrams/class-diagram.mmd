@@ -84,8 +84,8 @@ classDiagram
     Course "1" o-- "*" Course : prasyaratUntuk
     Course "*" o-- "1" Course : prasyaratDari
 
-    %% Association (bukan composition untuk Grade - nilai akademik bersifat permanen)
-    Enrollment "1" --> "0..1" Grade : memiliki
+    %% Composition (relasi kuat: Grade bergantung pada Enrollment)
+    Enrollment "1" *-- "0..1" Grade : memiliki
     Mahasiswa "1" --> "*" Enrollment : melakukan
     Course "1" --> "*" Enrollment : dimilikiOleh
     Dosen "1" --> "*" Course : mengajar

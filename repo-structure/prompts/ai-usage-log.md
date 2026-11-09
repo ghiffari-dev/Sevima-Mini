@@ -376,3 +376,131 @@ classDiagram
 Semua 6 poin analisis telah diterapkan pada `class-diagram.mmd`. Tidak ada perubahan struktural tambahan yang diperlukan karena diagram saat ini sudah mencakup seluruh requirement: inheritance User, class Payment, visibility lengkap, multiplicity semua relasi, composition vs association yang tepat, dan relasi Dosen–Course/Schedule.
 
 ---
+
+## Log 04 — Mengubah Enrollment dan Grade menjadi Composition
+
+### Tujuan
+Mengubah relasi Enrollment ↔ Grade dari association (`--`) menjadi composition (`*--`) berdasarkan keputusan bahwa Grade adalah objek bagian yang tidak dapat berdiri sendiri tanpa Enrollment sebagai objek induk.
+
+### Perintah (Prompt)
+Ubah relasi Enrollment dan Grade pada class diagram UML SEVIMA-Mini menjadi composition dengan aturan:
+1. Enrollment adalah objek induk (whole).
+2. Grade adalah objek bagian (part).
+3. Satu Enrollment dapat memiliki nol atau satu Grade.
+4. Grade tidak dapat berdiri sendiri tanpa Enrollment.
+5. Gunakan composition (`*--`) untuk relasi ini.
+6. Pertahankan semua relasi dan visibility lain yang sudah ada.
+
+Output dalam format Mermaid Class Diagram.
+
+### Hasil
+```mermaid
+classDiagram
+    direction TB
+
+    %% User Hierarchy (Inheritance - lolos uji "is a")
+    class User {
+        <<abstract>>
+        # String id
+        # String nama
+        # String email
+        + login()
+        + logout()
+    }
+
+    class Mahasiswa {
+        - String nim
+        - String jurusan
+        + getMahasiswaInfo()
+    }
+
+    class Dosen {
+        - String nip
+        - String keahlian
+        + getDosenInfo()
+    }
+
+    class Admin {
+        - String role
+        + manageSystem()
+    }
+
+    class CalonMahasiswa {
+        - String noPendaftaran
+        + submitRegistration()
+    }
+
+    %% Core Classes
+    class Course {
+        - String kode
+        - String nama
+        - int sks
+        + getCourseDetails()
+    }
+
+    class Enrollment {
+        - String idEnrollment
+        - Date tanggalDaftar
+        - String status
+        + processEnrollment()
+    }
+
+    class Schedule {
+        - String hari
+        - String jam
+        - String ruangan
+        + updateSchedule()
+    }
+
+    class Grade {
+        - double nilaiAngka
+        - String nilaiHuruf
+        - double bobot
+        + calculateFinalGrade()
+    }
+
+    class Payment {
+        - String idPayment
+        - double jumlah
+        - Date tanggalBayar
+        - String statusBayar
+        + verifyPayment()
+        + generateReceipt()
+    }
+
+    %% Inheritance
+    User <|-- Mahasiswa
+    User <|-- Dosen
+    User <|-- Admin
+    User <|-- CalonMahasiswa
+
+    %% Aggregation (relasi lemah)
+    Course "1" o-- "*" Schedule : memiliki
+    Dosen "1" o-- "*" Schedule : mengajar
+    Course "1" o-- "*" Course : prasyaratUntuk
+    Course "*" o-- "1" Course : prasyaratDari
+
+    %% Composition (relasi kuat: Grade bergantung pada Enrollment)
+    Enrollment "1" *-- "0..1" Grade : memiliki
+    Mahasiswa "1" --> "*" Enrollment : melakukan
+    Course "1" --> "*" Enrollment : dimilikiOleh
+    Dosen "1" --> "*" Course : mengajar
+
+    %% Payment relationships
+    Mahasiswa "1" --> "*" Payment : melakukan
+    CalonMahasiswa "1" --> "*" Payment : melakukan
+    Payment "1" --> "1" Enrollment : untuk
+```
+
+### Evaluasi
+
+| Aspek | Keputusan | Alasan |
+|-------|-----------|--------|
+| Jenis relasi | Composition (`*--`) | Grade tidak berdiri sendiri tanpa Enrollment |
+| Multiplicity | `Enrollment "1" *-- "0..1" Grade` | Satu enrollment dapat memiliki nol atau satu grade |
+| Siklus hidup | Grade terikat Enrollment | Jika enrollment dihapus, grade ikut terhapus |
+
+### Alasan Revisi
+Sebelumnya Enrollment → Grade menggunakan association karena dianggap nilai akademik bersifat permanen. Setelah evaluasi ulang, keputusan akhir adalah composition karena Grade adalah objek bagian yang hanya bermakna dalam konteks Enrollment. Semua relasi lain (inheritance, aggregation, association, visibility, multiplicity) tetap terpelihara.
+
+---
