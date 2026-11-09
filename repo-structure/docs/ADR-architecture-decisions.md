@@ -4,63 +4,31 @@
 Disetujui
 
 ## 2. Konteks
-Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML yang mencakup manajemen pengguna, mata kuliah, KRS, jadwal, nilai, dan pembayaran. Diagram kelas awal dihasilkan oleh AI (Gemini 1.5 Flash) melalui prompt engineering, kemudian direvisi manual berdasarkan validasi aturan UML (video PBO Minggu 01: "Jangan percaya, periksa").
+Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML yang mencakup manajemen pengguna, katalog mata kuliah, penawaran kelas per semester, KRS, jadwal, nilai, dan pembayaran. Desain dikembangkan secara iteratif melalui analisis arsitektur berorientasi objek (OOP) dan prinsip SOLID.
 
 ## 3. Keputusan
 
-### 3.1 Hierarki Pengguna (Inheritance)
-`User` dirancang sebagai **abstract base class** dengan subclass konkret: `Mahasiswa`, `Dosen`, `Admin`, dan `CalonMahasiswa`.
-- **Alasan:** Semua tipe pengguna berbagi atribut identitas dasar (`id`, `nama`, `email`) dan perilaku autentikasi (`login`, `logout`).
-- **Prinsip SOLID:** Open/Closed Principle (OCP) — tipe pengguna baru dapat ditambahkan tanpa mengubah `User`; Liskov Substitution Principle (LSP) — semua subclass dapat diperlakukan sebagai `User`.
+### 3.1 Hierarki Pengguna (Inheritance & Polymorphism)
+User dirancang sebagai abstract base class dengan subclass konkret: Mahasiswa, Dosen, Admin, dan CalonMahasiswa.
+- Polimorfisme: Method getInfo() didefinisikan sebagai method abstrak di User dan di-override di setiap subclass.
+- Visibilitas: Atribut dasar menggunakan visibilitas # (protected) untuk kelas abstrak, dan - (private) untuk atribut spesifik subclass.
+- CalonMahasiswa: Bertindak sebagai calon pengguna yang dapat bertransformasi menjadi Mahasiswa setelah proses PMB selesai.
 
-### 3.2 Relasi Enrollment ↔ Grade
-Digunakan **composition** (`*--`).
-- **Alasan:** Grade adalah objek bagian yang tidak dapat berdiri sendiri tanpa Enrollment sebagai objek induk. Satu enrollment dapat memiliki nol atau satu grade.
-- **Multiplicity:** `Enrollment "1" *-- "0..1" Grade` — satu enrollment mungkin belum memiliki nilai, satu nilai milik satu enrollment.
+### 3.2 Katalog vs Penawaran Kelas (Course & Kelas)
+- Course bertindak sebagai katalog mata kuliah murni (kode, nama, SKS, prasyarat).
+- Kelas bertindak sebagai instansiasi penawaran mata kuliah di semester tertentu (idKelas, namaKelas, semester, kapasitas). Course berelasi agresi ke Kelas (Course "1" o-- "*" Kelas).
 
-### 3.3 Relasi Course ↔ Schedule
-Digunakan **aggregation** (`o--`).
-- **Alasan:** Jadwal dapat eksis secara konsep terpisah dari course (mis. jadwal kosong belum diisi course), dan satu schedule tidak dimiliki secara eksklusif oleh satu course seumur hidup.
-- **Multiplicity:** `Course "1" o-- "*" Schedule` — satu course memiliki banyak jadwal.
+### 3.3 Relasi Pendaftaran & Pembayaran (PendaftaranPMB & PendaftaranKRS)
+- Pendaftaran dipecah menjadi PendaftaranPMB (untuk calon mahasiswa) dan PendaftaranKRS (untuk mahasiswa aktif mengisi KRS), mewarisi kelas abstrak Pendaftaran.
+- Kardinalitas PendaftaranKRS ke Enrollment diatur 1 ke 1..* (satu pengisian KRS menghasilkan banyak mata kuliah yang diambil), tanpa atribut idEnrollment yang redundan.
+- Pembayaran dipecah menjadi PembayaranPMB dan PembayaranKRS mewarisi kelas abstrak Payment. Atribut yang redundan dihilangkan dengan memanfaatkan superclass.
 
-### 3.4 Relasi Course ↔ Course (Prasyarat)
-Digunakan **self-referensi aggregation** dengan role name.
-- **Alasan:** Sebuah course dapat memiliki banyak prasyarat, dan sebuah course dapat menjadi prasyarat bagi banyak course lain.
-- **Role name:** `prasyaratUntuk` (course yang membutuhkan prasyarat) dan `prasyaratDari` (course yang menjadi prasyarat) untuk menghindari ambigu.
-- **Multiplicity:** `Course "1" o-- "*" Course : prasyaratUntuk` dan `Course "*" o-- "1" Course : prasyaratDari`.
+### 3.4 Relasi Course (Prasyarat)
+- Prasyarat mata kuliah menggunakan asosiasi dua arah simetris: Course "*" -- "*" Course : prasyarat.
 
-### 3.5 Class Payment
-`Payment` dirancang sebagai **abstract base class** dengan dua subclass konkret:
-- `PembayaranPMB`: untuk pendaftaran mahasiswa baru, terkait `CalonMahasiswa`, atribut `noPendaftaran`, `tanggalPendaftaran`.
-- `PembayaranKRS`: untuk pengisian KRS, terkait `Mahasiswa` dan `Enrollment` (1→1), atribut `idEnrollment`, `jumlahKRS`.
-
-- **Relasi:** `CalonMahasiswa "1" --> "*" PembayaranPMB`, `Mahasiswa "1" --> "*" PembayaranKRS`, `PembayaranKRS "1" --> "1" Enrollment`.
-- **Alasan:** Memisahkan concern pembayaran PMB dan KRS agar lebih akurat domainnya. Pembayaran PMB tidak memerlukan enrollment karena calon mahasiswa baru belum daftar kuliah, sedangkan pembayaran KRS wajib terkait satu enrollment.
-- **Prinsip SOLID:** Single Responsibility Principle (SRP) — setiap subclass pembayaran hanya menangani satu jenis transaksi.
-
-### 3.6 Visibility Modifier
-Semua atribut diberi visibilitas `-` (private), semua method diberi `+` (public), dan atribut di `User` (abstract) diberi `#` (protected).
-- **Alasan:** Enkapsulasi — atribut tidak boleh diakses langsung dari luar class; method merupakan antarmuka publik.
+### 3.5 Relasi Kelas & Jadwal (Schedule)
+- Kelas berelasi komposit (*--) ke Schedule karena jadwal perkuliahan terikat mutlak dan tidak berdiri sendiri terlepas dari kelas penawarannya.
 
 ## 4. Trade-off yang Dipertimbangkan
-
-| Keputusan | Trade-off | Alasan Dipilih |
-|-----------|-----------|----------------|
-| Association untuk Enrollment–Grade (bukan composition) | Grade tidak otomatis dihapus saat Enrollment dihapus | Nilai akademik bersifat permanen; menghindari kehilangan data historis |
-| Aggregation untuk Course–Schedule (bukan composition) | Schedule tidak dihapus otomatis saat Course dihapus | Jadwal memiliki siklus hidup yang lebih fleksibel |
-| Self-referensi Course untuk prasyarat | Memerlukan role name agar tidak ambigu | Menghindari class terpisah untuk tabel relasi prasyarat, tetap sederhana |
-| Payment terpisah dari Enrollment | Perlu relasi tambahan ke Enrollment | Memisahkan concern pembayaran dari proses enrollment (SRP) |
-
-## 5. Pattern yang Diterapkan
-- **Inheritance / Polymorphism:** Hierarki `User` untuk berbagai jenis pengguna.
-- **Aggregation:** Relasi lemah antara Course–Schedule dan Course–Course (prasyarat).
-- **Association:** Relasi Enrollment–Grade, Mahasiswa–Enrollment, Course–Enrollment, Dosen–Course, Payment–Enrollment.
-
-## 6. Dampak
-- Diagram kelas sekarang mencakup 9 class dengan visibility lengkap dan multiplicity pada semua relasi.
-- Tidak ada circular dependency yang terdeteksi.
-- Semua relasi sudah diverifikasi terhadap konsep UML (inheritance, aggregation, association) tanpa composition yang tidak tepat.
-- Semua 6 poin analisis revisi (Prompt Ke-3 / Log 03) telah diterapkan: Grade sebagai association, relasi Dosen–Course/Schedule, relasi CalonMahasiswa–Payment, kardinalitas Payment 1→1, role name self-referensi Course, dan visibility lengkap.
-- Siap untuk dilanjutkan ke Use Case Diagram dan Sequence Diagram (tahap berikutnya).
-
----
+- Kompleksitas Domain: Penambahan entitas Kelas dan pemisahan Pendaftaran meningkatkan jumlah kelas, namun membuat pemodelan jauh lebih akurat dan mendekati sistem akademik riil (Enterprise Academic System).
+- Eliminasi Duplikasi: Penghapusan atribut yang berulang pada subclass mengoptimalkan struktur inheritance.

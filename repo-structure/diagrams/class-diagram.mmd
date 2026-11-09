@@ -1,7 +1,7 @@
-﻿classDiagram
+classDiagram
     direction TB
 
-    %% User Hierarchy (Polymorphism via getInfo override)
+    %% User Hierarchy (Polymorphism & CalonMahasiswa lifecycle)
     class User {
         <<abstract>>
         # String id
@@ -31,7 +31,9 @@
 
     class CalonMahasiswa {
         - String noPendaftaran
+        - String statusSeleksi
         + getInfo()
+        + registerAsMahasiswa()
     }
 
     %% Academic Catalog & Offering
@@ -59,7 +61,6 @@
 
     class Enrollment {
         - String idEnrollment
-        - Date tanggalDaftar
         - String status
         + processEnrollment()
     }
@@ -71,7 +72,7 @@
         + calculateFinalGrade()
     }
 
-    %% Pendaftaran Hierarchy
+    %% Pendaftaran Hierarchy (Cleaned of duplication)
     class Pendaftaran {
         <<abstract>>
         # String idPendaftaran
@@ -82,18 +83,16 @@
     }
 
     class PendaftaranPMB {
-        - String noPendaftaran
         - String pilihanJurusan
         + verifikasiPMB()
     }
 
     class PendaftaranKRS {
-        - String idEnrollment
         - int totalSks
         + prosesKRS()
     }
 
-    %% Payment Hierarchy
+    %% Payment Hierarchy (Cleaned of duplication)
     class Payment {
         <<abstract>>
         # String idPayment
@@ -105,12 +104,10 @@
     }
 
     class PembayaranPMB {
-        - Date tanggalPendaftaran
         + buatInvoicePMB()
     }
 
     class PembayaranKRS {
-        - double jumlahKRS
         + buatInvoiceKRS()
     }
 
@@ -124,12 +121,11 @@
     Payment <|-- PembayaranPMB
     Payment <|-- PembayaranKRS
 
-    %% Relationships & Cardinalities
+    %% Relationships & Cardinalities (Cleaned & Optimized)
     Course "1" o-- "*" Kelas : katalogKelas
     Kelas "1" *-- "*" Schedule : memilikiJadwal
     Dosen "1" --> "*" Kelas : mengajar
-    Course "1" o-- "*" Course : prasyaratUntuk
-    Course "*" o-- "1" Course : prasyaratDari
+    Course "*" -- "*" Course : prasyarat
 
     Mahasiswa "1" --> "*" Enrollment : melakukan
     Kelas "1" --> "*" Enrollment : menampung
@@ -137,6 +133,6 @@
 
     CalonMahasiswa "1" --> "1" PendaftaranPMB : melakukan
     Mahasiswa "1" --> "*" PendaftaranKRS : melakukan
-    PendaftaranKRS "1" --> "1" Enrollment : menghasilkan
+    PendaftaranKRS "1" --> "1..*" Enrollment : menghasilkan
     PendaftaranPMB "1" --> "1" PembayaranPMB : memerlukan
     PendaftaranKRS "1" --> "1" PembayaranKRS : memerlukan
