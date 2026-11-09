@@ -19,7 +19,7 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 repo-structure/
 ├── diagrams/
 │   ├── class-diagram.mmd     # Diagram kelas UML (Mermaid)
-│   ├── usecase-diagram.mmd   # Diagram use case UML (Mermaid)
+│   ├── usecase-diagram.puml   # Diagram use case UML (PlantUML)
 │   ├── sequence-krs.mmd      # Diagram sekuens KRS (Mermaid)
 │   └── sequence-pmb.mmd      # Diagram sekuens PMB (Mermaid)
 ├── docs/
@@ -32,7 +32,7 @@ repo-structure/
 ## Teknologi & Tools
 
 - Bahasa pemrograman: Python (contoh berkas: `nama.py`)
-- Diagram: Mermaid (`.mmd`)
+- **Diagrams:** Mermaid (`.mmd`) untuk Class Diagram & Sequence Diagram, PlantUML (`.puml`) untuk Use Case Diagram
 - Dokumentasi: Markdown, PDF
 
 ## Cara Menjalankan
