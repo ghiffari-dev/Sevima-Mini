@@ -28,3 +28,7 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Cline Rules
+.clinerules
+
