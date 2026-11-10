@@ -3,9 +3,14 @@ import sqlite3
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.main import get_db
+from app.repositories.sqlite_pmb_repository import SQLitePMBRepository
 from app.services.pmb_service import PMBService
 
 router = APIRouter()
+
+def get_pmb_service(db: sqlite3.Connection = Depends(get_db)) -> PMBService:
+    repo = SQLitePMBRepository(db)
+    return PMBService(repo)
 
 class CalonMahasiswaCreate(BaseModel):
     nama_lengkap: str = Field(..., min_length=3, max_length=150)
@@ -25,23 +30,24 @@ class CalonMahasiswaCreate(BaseModel):
         return v
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register_calon_mahasiswa(data: CalonMahasiswaCreate, db: sqlite3.Connection = Depends(get_db)):
-    last_id = PMBService.register_calon_mahasiswa(db, data.model_dump())
+def register_calon_mahasiswa(data: CalonMahasiswaCreate, service: PMBService = Depends(get_pmb_service)):
+    last_id = service.register_calon_mahasiswa(data.model_dump())
     return {"message": "Pendaftaran berhasil", "id": last_id, "status": "pending"}
 
 @router.get("/status/{id}")
-def get_status_pendaftar(id: int, db: sqlite3.Connection = Depends(get_db)):
-    result = PMBService.get_status_pendaftar(db, id)
+def get_status_pendaftar(id: int, service: PMBService = Depends(get_pmb_service)):
+    result = service.get_status_pendaftar(id)
     return result
 
 @router.put("/approve/{id}")
-def approve_pendaftar(id: int, db: sqlite3.Connection = Depends(get_db)):
-    result = PMBService.approve_pendaftar(db, id)
+def approve_pendaftar(id: int, service: PMBService = Depends(get_pmb_service)):
+    result = service.approve_pendaftar(id)
     return result
 
 @router.get("/stats")
-def get_dashboard_stats(db: sqlite3.Connection = Depends(get_db)):
-    stats = PMBService.get_dashboard_stats(db)
+def get_dashboard_stats(service: PMBService = Depends(get_pmb_service)):
+    stats = service.get_dashboard_stats()
     return stats
+
 
 

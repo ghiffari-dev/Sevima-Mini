@@ -53,3 +53,23 @@ Analisis folder diagram (class-diagram, sequence-krs, sequence-pmb, usecase-diag
 ### Evaluasi (Objektif)
 - **Kelebihan**: Backend sistem *SEVIMA-Mini* kini memiliki fondasi data dan skema yang lengkap, modular, dan taat asas pada prinsip OOP serta diagram perancangan sistem akademik. Seluruh komponen teruji dengan test suite.
 - **Kekurangan / Kompleksitas Tambahan**: Kompleksitas relasi antar tabel (polymorphic mapping & self-referential) menuntut pemahaman mendalam tentang ORM relationship configuration di SQLAlchemy 2.0.
+
+
+## Log 03 — Refaktorisasi Arsitektur Backend Berbasis Prinsip SOLID (Repository Pattern & Dependency Injection)
+
+### Tujuan
+Menerapkan prinsip SOLID secara ketat pada modul PMB (Penerimaan Mahasiswa Baru) melalui pemisahan lapisan data access menggunakan *Repository Pattern* (`IPMBRepository` & `SQLitePMBRepository`), pemisahan *Business Logic* di *Service*, serta penerapan *Dependency Injection* pada *FastAPI Routers*.
+
+### Perintah (Prompt)
+Refaktorisasi kode backend SEVIMA-Mini agar sepenuhnya menerapkan prinsip SOLID (Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion), khususnya pada modul *PMB* dengan memisahkan interaksi database ke dalam *Repository* dan menyuntikkannya ke *Service* serta *Router*. Jalankan test suite untuk memastikan semuanya berjalan baik.
+
+### Hasil (Hasil Implementasi)
+- Pembuatan interface abstrak `IPMBRepository` di `backend/app/repositories/pmb_repository.py`.
+- Pembuatan implementasi konkret `SQLitePMBRepository` di `backend/app/repositories/sqlite_pmb_repository.py`.
+- Pembaruan `PMBService` (`backend/app/services/pmb_service.py`) agar menerima *repository* melalui *constructor* (Dependency Injection) dan fokus murni pada logika bisnis.
+- Pembaruan `backend/app/routers/pmb.py` untuk menginjeksikan *service* melalui FastAPI `Depends`.
+- Menjalankan unit test dengan hasil **12 passed** (`pytest`).
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Arsitektur menjadi jauh lebih bersih, modular, dan mematuhi prinsip *Dependency Inversion* serta *Single Responsibility*. Kode kini sangat mudah di-*mock* dan di-*unit test* secara terisolasi tanpa ketergantungan langsung ke implementasi SQLite mentah.
+- **Kekurangan / Kompleksitas Tambahan**: Bertambahnya jumlah file (pemisahan folder `repositories/`) yang memerlukan manajemen impor yang cermat.

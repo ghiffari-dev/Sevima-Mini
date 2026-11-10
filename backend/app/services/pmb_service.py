@@ -1,85 +1,44 @@
 from datetime import datetime
-import sqlite3
 from fastapi import HTTPException, status
-
-def generate_nim(tahun: int, kode_prodi: str, conn: sqlite3.Connection) -> str:
-    cursor = conn.cursor()
-    cursor.execute("BEGIN IMMEDIATE;")
-    prefix = f"{tahun}{kode_prodi}"
-    cursor.execute(
-        "SELECT nim FROM calon_mahasiswa WHERE nim LIKE ? ORDER BY nim DESC LIMIT 1;",
-        (f"{prefix}%",)
-    )
-    row = cursor.fetchone()
-    if row and row["nim"]:
-        try:
-            running_num = int(row["nim"].split("-")[-1]) + 1
-        except Exception:
-            running_num = 1
-    else:
-        running_num = 1
-    return f"{prefix}-{running_num:04d}"
+from app.repositories.pmb_repository import IPMBRepository
 
 class PMBService:
-    @staticmethod
-    def register_calon_mahasiswa(db: sqlite3.Connection, data_dict: dict) -> int:
-        cursor = db.cursor()
-        cursor.execute("SELECT id FROM calon_mahasiswa WHERE email = ?;", (data_dict["email"],))
-        if cursor.fetchone():
+    def __init__(self, repo: IPMBRepository):
+        self.repo = repo
+
+    def generate_nim(self, tahun: int, kode_prodi: str) -> str:
+        prefix = f"{tahun}{kode_prodi}"
+        latest_nim = self.repo.get_latest_nim_by_prefix(prefix)
+        if latest_nim:
+            try:
+                running_num = int(latest_nim.split("-")[-1]) + 1
+            except Exception:
+                running_num = 1
+        else:
+            running_num = 1
+        return f"{prefix}-{running_num:04d}"
+
+    def register_calon_mahasiswa(self, data_dict: dict) -> int:
+        if self.repo.find_by_email(data_dict["email"]):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email sudah terdaftar.")
         
-        cursor.execute("SELECT id FROM program_studi WHERE id = ?;", (data_dict["program_studi_id"],))
-        if not cursor.fetchone():
+        if not self.repo.find_prodi_by_id(data_dict["program_studi_id"]):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Program studi tidak ditemukan.")
 
-        cursor.execute("SELECT id FROM jalur_masuk WHERE id = ?;", (data_dict["jalur_masuk_id"],))
-        if not cursor.fetchone():
+        if not self.repo.find_jalur_by_id(data_dict["jalur_masuk_id"]):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jalur masuk tidak ditemukan.")
 
-        created_at = datetime.utcnow().isoformat()
-        cursor.execute(
-            "INSERT INTO calon_mahasiswa (nama_lengkap, email, phone, tanggal_lahir, alamat, program_studi_id, jalur_masuk_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?);",
-            (
-                data_dict["nama_lengkap"],
-                data_dict["email"],
-                data_dict["phone"],
-                data_dict["tanggal_lahir"],
-                data_dict.get("alamat"),
-                data_dict["program_studi_id"],
-                data_dict["jalur_masuk_id"],
-                created_at
-            )
-        )
-        db.commit()
-        return cursor.lastrowid
+        data_dict["created_at"] = datetime.utcnow().isoformat()
+        return self.repo.save_calon_mahasiswa(data_dict)
 
-    @staticmethod
-    def get_status_pendaftar(db: sqlite3.Connection, pendaftar_id: int) -> dict:
-        cursor = db.cursor()
-        cursor.execute(
-            "SELECT cm.*, ps.nama AS nama_program_studi, ps.kode AS kode_prodi, jm.nama AS nama_jalur_masuk "
-            "FROM calon_mahasiswa cm "
-            "JOIN program_studi ps ON cm.program_studi_id = ps.id "
-            "JOIN jalur_masuk jm ON cm.jalur_masuk_id = jm.id "
-            "WHERE cm.id = ?;",
-            (pendaftar_id,)
-        )
-        row = cursor.fetchone()
+    def get_status_pendaftar(self, pendaftar_id: int) -> dict:
+        row = self.repo.find_pendaftar_by_id(pendaftar_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pendaftar tidak ditemukan.")
-        return dict(row)
+        return row
 
-    @staticmethod
-    def approve_pendaftar(db: sqlite3.Connection, pendaftar_id: int) -> dict:
-        cursor = db.cursor()
-        cursor.execute(
-            "SELECT cm.*, ps.kode AS kode_prodi "
-            "FROM calon_mahasiswa cm "
-            "JOIN program_studi ps ON cm.program_studi_id = ps.id "
-            "WHERE cm.id = ?;",
-            (pendaftar_id,)
-        )
-        row = cursor.fetchone()
+    def approve_pendaftar(self, pendaftar_id: int) -> dict:
+        row = self.repo.find_pendaftar_by_id(pendaftar_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pendaftar tidak ditemukan.")
         
@@ -87,22 +46,20 @@ class PMBService:
             return {"message": "Sudah disetujui (Idempotent)", "nim": row["nim"], "status": "approved"}
             
         tahun = datetime.utcnow().year
-        nim = generate_nim(tahun, row["kode_prodi"], db)
+        nim = self.generate_nim(tahun, row["kode_prodi"])
         approved_at = datetime.utcnow().isoformat()
         
-        cursor.execute("UPDATE calon_mahasiswa SET status = 'approved', nim = ?, approved_at = ? WHERE id = ?;", (nim, approved_at, pendaftar_id))
-        db.commit()
+        self.repo.update_status_and_nim(pendaftar_id, "approved", nim, approved_at)
         return {"message": "Disetujui dan NIM digenerate", "nim": nim, "status": "approved"}
 
-    @staticmethod
-    def get_dashboard_stats(db: sqlite3.Connection) -> dict:
-        cursor = db.cursor()
-        cursor.execute("SELECT COUNT(*) AS total FROM calon_mahasiswa;")
-        total = cursor.fetchone()["total"]
-        cursor.execute("SELECT COUNT(*) AS count FROM calon_mahasiswa WHERE status = 'pending';")
-        pending = cursor.fetchone()["count"]
-        cursor.execute("SELECT COUNT(*) AS count FROM calon_mahasiswa WHERE status = 'approved';")
-        approved = cursor.fetchone()["count"]
-        cursor.execute("SELECT COUNT(*) AS count FROM calon_mahasiswa WHERE status = 'rejected';")
-        rejected = cursor.fetchone()["count"]
-        return {"total_pendaftar": total, "pending": pending, "approved": approved, "rejected": rejected}
+    def get_dashboard_stats(self) -> dict:
+        total = self.repo.count_total_pendaftar()
+        pending = self.repo.count_pendaftar_by_status("pending")
+        approved = self.repo.count_pendaftar_by_status("approved")
+        rejected = self.repo.count_pendaftar_by_status("rejected")
+        return {
+            "total_pendaftar": total,
+            "pending": pending,
+            "approved": approved,
+            "rejected": rejected
+        }
