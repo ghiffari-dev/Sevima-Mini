@@ -1,9 +1,10 @@
-# AI USAGE LOG
+﻿# AI USAGE LOG
 
 ## Log 01 — Desain Skema Database PMB dan Migrasi SQLAlchemy 2.0
 
 ### Tujuan
-Merancang dan mengimplementasikan skema database Penerimaan Mahasiswa Baru (PMB) untuk sistem akademik menggunakan SQLAlchemy 2.0 (`Mapped` & `mapped_column`), Alembic migration (`upgrade()` dan `downgrade()`), lengkap dengan tabel relasional (`calon_mahasiswa`, `program_studi`, `jalur_masuk`), kolom `nim` (nullable + unique), serta penjelasan penegakan *constraint* (di level Database vs Aplikasi).
+Merancang dan mengimplementasikan skema database Penerimaan Mahasiswa Baru (PMB) untuk sistem akademik menggunakan SQLAlchemy 2.0 (Mapped & mapped_column), Alembic migration (upgrade() dan downgrade()), lengkap dengan tabel relasional (calon_mahasiswa, program_studi, jalur_masuk), kolom 
+im (nullable + unique), serta penjelasan penegakan *constraint* (di level Database vs Aplikasi).
 
 ### Perintah (Prompt)
 Desain skema database PMB untuk sistem akademik:
@@ -20,13 +21,35 @@ Lima tambahan dari saya:
 5. Jelaskan tiap constraint ditegakkan di DB atau aplikasi
 
 ### Hasil (Hasil Implementasi)
-- Pembuatan model SQLAlchemy 2.0 untuk `ProgramStudi`, `JalurMasuk`, dan `CalonMahasiswa` menggunakan syntax `Mapped` dan `mapped_column`.
-- Pembuatan skrip migrasi Alembic dengan fungsi `upgrade()` dan `downgrade()` secara lengkap.
-- Penambahan kolom `nim` yang bersifat nullable dan unique pada tabel `calon_mahasiswa`.
-- Validasi email dan format nomor telepon Indonesia (`^(\+62|62|0)[0-9]{9,12}$`).
-- Dokumentasi dan pemetaan penegakan constraint (Database level seperti `UNIQUE`, `FOREIGN KEY`, `NOT NULL`, vs Aplikasi level seperti format validasi regex phone & email).
+- Pembuatan model SQLAlchemy 2.0 untuk ProgramStudi, JalurMasuk, dan CalonMahasiswa menggunakan syntax Mapped dan mapped_column.
+- Pembuatan skrip migrasi Alembic dengan fungsi upgrade() dan downgrade() secara lengkap.
+- Penambahan kolom 
+im yang bersifat nullable dan unique pada tabel calon_mahasiswa.
+- Validasi email dan format nomor telepon Indonesia (^(\+62|62|0)[0-9]{9,12}$).
+- Dokumentasi dan pemetaan penegakan constraint (Database level seperti UNIQUE, FOREIGN KEY, NOT NULL, vs Aplikasi level seperti format validasi regex phone & email).
 
 ### Evaluasi (Objektif)
-- **Kelebihan**: Struktur database menjadi sangat modular, normalisasi data terjaga dengan adanya tabel terpisah untuk `jalur_masuk` dan `program_studi`, penerapan standar modern SQLAlchemy 2.0, serta migrasi yang aman dengan rollback (`downgrade`).
+- **Kelebihan**: Struktur database menjadi sangat modular, normalisasi data terjaga dengan adanya tabel terpisah untuk jalur_masuk dan program_studi, penerapan standar modern SQLAlchemy 2.0, serta migrasi yang aman dengan rollback (downgrade).
 - **Kekurangan / Kompleksitas Tambahan**: Penggunaan migrasi Alembic dan validasi multi-layer (DB + Pydantic/Aplikasi) memerlukan kedisiplinan dalam sinkronisasi skema model dan migrasi fisik database.
 
+
+## Log 02 — Perluasan Skema Database, Model SQLAlchemy 2.0, Pydantic Schemas, dan Core Security untuk SEVIMA-Mini (PMB & KRS)
+
+### Tujuan
+Melengkapi arsitektur backend SEVIMA-Mini secara komprehensif berdasarkan diagram perancangan (*Class Diagram*, *Use Case Diagram*, & *Sequence Diagrams*) dengan mengimplementasikan modul Autentikasi/Security, Hierarki User (Mahasiswa, Dosen, Admin), Katalog Akademik & Prasyarat Mata Kuliah, Pendaftaran KRS & Enrollment, Penilaian (*Grade*), serta Pembayaran PMB & KRS.
+
+### Perintah (Prompt)
+Analisis folder diagram (class-diagram, sequence-krs, sequence-pmb, usecase-diagram) dan lengkapi folder backend/app/schemas, models, dan core untuk seluruh sistem SEVIMA-Mini secara utuh (Auth, User hierarchy, Course, Kelas, Schedule, PendaftaranKRS, Enrollment, Grade, Payment).
+
+### Hasil (Hasil Implementasi)
+- Pembuatan ackend/app/core/security.py untuk *password hashing* (crypt) dan pembuatan token JWT (create_access_token).
+- Pembuatan model SQLAlchemy 2.0 untuk hierarki User (User, Mahasiswa, Dosen, Admin) menggunakan *polymorphic inheritance*.
+- Pembuatan model akademik (Course, Kelas, Schedule) serta relasi *self-referential many-to-many* untuk prasyarat mata kuliah (course_prerequisites).
+- Pembuatan model pendaftaran & pembayaran polimorfik (Pendaftaran, PendaftaranPMB, PendaftaranKRS, Payment, PembayaranPMB, PembayaranKRS).
+- Pembuatan model Enrollment dan Grade untuk pengelolaan perkuliahan dan pencatatan nilai mahasiswa.
+- Pembuatan dan pelengkapan seluruh skema Pydantic di ackend/app/schemas/ (uth.py, user.py, course.py, krs.py, grade.py, payment.py).
+- Penambahan dan eksekusi unit test komprehensif dengan hasil **12 passed**.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Backend sistem *SEVIMA-Mini* kini memiliki fondasi data dan skema yang lengkap, modular, dan taat asas pada prinsip OOP serta diagram perancangan sistem akademik. Seluruh komponen teruji dengan test suite.
+- **Kekurangan / Kompleksitas Tambahan**: Kompleksitas relasi antar tabel (polymorphic mapping & self-referential) menuntut pemahaman mendalam tentang ORM relationship configuration di SQLAlchemy 2.0.
