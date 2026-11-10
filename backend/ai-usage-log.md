@@ -73,3 +73,22 @@ Refaktorisasi kode backend SEVIMA-Mini agar sepenuhnya menerapkan prinsip SOLID 
 ### Evaluasi (Objektif)
 - **Kelebihan**: Arsitektur menjadi jauh lebih bersih, modular, dan mematuhi prinsip *Dependency Inversion* serta *Single Responsibility*. Kode kini sangat mudah di-*mock* dan di-*unit test* secara terisolasi tanpa ketergantungan langsung ke implementasi SQLite mentah.
 - **Kekurangan / Kompleksitas Tambahan**: Bertambahnya jumlah file (pemisahan folder `repositories/`) yang memerlukan manajemen impor yang cermat.
+
+
+## Log 04 — Pengamanan Konfigurasi Secret Key (Environment Variable Support)
+
+### Tujuan
+Meningkatkan keamanan penanganan *secret key* JWT (`SECRET_KEY`) di `backend/app/core/security.py` agar tidak di-*hardcode* secara mutlak, melainkan mendukung *Environment Variable* (`os.getenv`) dengan nilai *fallback* yang aman untuk pengembangan lokal dan pengujian.
+
+### Perintah (Prompt)
+Periksa apakah ada kunci rahasia atau informasi sensitif yang terekspos ke publik di repository. Perbarui penanganan `SECRET_KEY` di `security.py` agar mendukung environment variable.
+
+### Hasil (Hasil Implementasi)
+- Memperbarui `backend/app/core/security.py` menggunakan `os.getenv("SECRET_KEY", "sevima-mini-secret-key-very-secure")`.
+- Memastikan seluruh unit test tetap berjalan sukses dengan hasil **12 passed** (`pytest`).
+- Konfirmasi bahwa file sensitif seperti `.env` dan database SQLite sudah masuk ke `.gitignore` sehingga aman dari eksposur publik di GitHub.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Aplikasi kini siap untuk di-deploy ke lingkungan *production* menggunakan *Environment Variable* tanpa modifikasi kode, sekaligus tetap mudah dijalankan di *local development* berkat *fallback value*.
+- **Kekurangan / Kompleksitas Tambahan**: Tidak ada.
+

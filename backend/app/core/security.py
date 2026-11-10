@@ -1,9 +1,10 @@
+import os
 from datetime import datetime, timedelta
 from jose import jwt
 import bcrypt
 
-# Secret key untuk JWT
-SECRET_KEY = "sevima-mini-secret-key-very-secure"
+# Secret key untuk JWT (menggunakan environment variable jika ada, dengan fallback default untuk development/testing)
+SECRET_KEY = os.getenv("SECRET_KEY", "sevima-mini-secret-key-very-secure")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
@@ -22,4 +23,5 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
 
