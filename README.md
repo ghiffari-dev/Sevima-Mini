@@ -22,7 +22,7 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 
 ## Struktur Proyek
 
-`
+```
 repo-structure/
 ├── diagrams/
 │   ├── class-diagram.mmd        # Diagram kelas UML (Mermaid)
@@ -47,7 +47,7 @@ backend/
 ├── test_pmb.py                  # Unit Testing (Pytest)
 ├── requirements.txt             # Daftar Dependensi Python
 └── AI_USAGE_LOG.md
-`
+```
 
 ## Teknologi & Tools
 
