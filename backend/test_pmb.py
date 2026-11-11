@@ -141,3 +141,47 @@ def test_approve_idempotent():
     nim_2 = second_approve["nim"]
     
     assert nim_1 == nim_2
+
+def test_approve_not_found():
+    response = client.put("/api/pmb/approve/99999")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Pendaftar tidak ditemukan."
+
+def test_approve_non_pending():
+    reg = client.post("/api/pmb/register", json={
+        "nama_lengkap": "Dewi Sartika",
+        "email": "dewi@example.com",
+        "phone": "081234567891",
+        "tanggal_lahir": "2004-12-04",
+        "program_studi_id": 1,
+        "jalur_masuk_id": 1
+    })
+    m_id = reg.json()["id"]
+    
+    # Manually update status to rejected in DB for testing
+    import sqlite3
+    conn = sqlite3.connect("backend/pmb_test.db")
+    conn.execute("UPDATE calon_mahasiswa SET status = 'rejected' WHERE id = ?;", (m_id,))
+    conn.commit()
+    conn.close()
+
+    approve_res = client.put(f"/api/pmb/approve/{m_id}")
+    assert approve_res.status_code == 409
+    assert approve_res.json()["detail"] == "Status bukan pending"
+
+
+def test_dashboard_stats():
+    client.post("/api/pmb/register", json={
+        "nama_lengkap": "User Pending",
+        "email": "pending@example.com",
+        "phone": "081234567892",
+        "tanggal_lahir": "2000-01-01",
+        "program_studi_id": 1,
+        "jalur_masuk_id": 1
+    })
+    response = client.get("/api/pmb/stats")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_pendaftar"] == 1
+    assert data["pending"] == 1
+

@@ -31,9 +31,5 @@ class IPMBRepository(ABC):
         pass
 
     @abstractmethod
-    def count_total_pendaftar(self) -> int:
-        pass
-
-    @abstractmethod
-    def count_pendaftar_by_status(self, status: str) -> int:
+    def get_stats_by_status(self) -> Dict[str, int]:
         pass

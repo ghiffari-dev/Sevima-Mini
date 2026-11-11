@@ -42,21 +42,30 @@ class PMBService:
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pendaftar tidak ditemukan.")
         
-        if row["status"] == "approved" and row["nim"]:
-            return {"message": "Sudah disetujui (Idempotent)", "nim": row["nim"], "status": "approved"}
+        if row["status"] == "approved":
+            return {"id": row["id"], "message": "Sudah disetujui (Idempotent)", "nim": row["nim"], "status": "approved"}
             
+        if row["status"] != "pending":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Status bukan pending")
+            
+        kode_prodi = row.get("kode_prodi")
+        if not kode_prodi or len(str(kode_prodi)) != 3:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kode program studi tidak valid")
+
         tahun = datetime.utcnow().year
-        nim = self.generate_nim(tahun, row["kode_prodi"])
+        nim = self.generate_nim(tahun, kode_prodi)
         approved_at = datetime.utcnow().isoformat()
         
         self.repo.update_status_and_nim(pendaftar_id, "approved", nim, approved_at)
-        return {"message": "Disetujui dan NIM digenerate", "nim": nim, "status": "approved"}
+        updated_row = self.repo.find_pendaftar_by_id(pendaftar_id)
+        return updated_row if updated_row else {"id": pendaftar_id, "message": "Disetujui dan NIM digenerate", "nim": nim, "status": "approved"}
 
     def get_dashboard_stats(self) -> dict:
-        total = self.repo.count_total_pendaftar()
-        pending = self.repo.count_pendaftar_by_status("pending")
-        approved = self.repo.count_pendaftar_by_status("approved")
-        rejected = self.repo.count_pendaftar_by_status("rejected")
+        stats_map = self.repo.get_stats_by_status()
+        pending = stats_map.get("pending", 0)
+        approved = stats_map.get("approved", 0)
+        rejected = stats_map.get("rejected", 0)
+        total = sum(stats_map.values())
         return {
             "total_pendaftar": total,
             "pending": pending,

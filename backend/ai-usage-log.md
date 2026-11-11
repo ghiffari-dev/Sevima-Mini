@@ -92,3 +92,29 @@ Periksa apakah ada kunci rahasia atau informasi sensitif yang terekspos ke publi
 - **Kelebihan**: Aplikasi kini siap untuk di-deploy ke lingkungan *production* menggunakan *Environment Variable* tanpa modifikasi kode, sekaligus tetap mudah dijalankan di *local development* berkat *fallback value*.
 - **Kekurangan / Kompleksitas Tambahan**: Tidak ada.
 
+
+
+## Log 05 — Implementasi Endpoint PMB Lanjutan, Generasi NIM Aman Race Condition, dan Unit Testing Komprehensif
+
+### Tujuan
+Mengimplementasikan endpoint PUT untuk approval/rejection pendaftaran PMB dengan penanganan error lengkap (404, 400, 409), mekanisme `generate_nim` yang aman dari *race condition*, endpoint GET untuk status & statistik pendaftaran berbasis pengelompokan (*GROUP BY*), serta penyusunan unit test komprehensif dengan cakupan kode $\ge 80\%$ dan dokumentasi API di Swagger.
+
+### Perintah (Prompt)
+Lengkapi fitur PMB pada backend dengan ketentuan:
+1. Endpoint PUT untuk approval dan rejection pendaftaran dengan penanganan HTTP status code 404, 400, dan 409 secara tepat.
+2. Mekanisme `generate_nim` yang aman terhadap *race condition*.
+3. Endpoint GET untuk mengambil status dan statistik pendaftaran menggunakan agregasi (*GROUP BY*).
+4. Pembuatan minimal 5 unit test mencakup skenario approval tidak valid dengan target *code coverage* $\ge 80\%$.
+5. Penyediaan dokumentasi Swagger / OpenAPI dan format penomoran NIM pada README.
+
+### Hasil (Hasil Implementasi)
+- Pembuatan endpoint PUT untuk proses *approve* dan *reject* pendaftaran PMB lengkap dengan penanganan kode error HTTP (404 Not Found, 400 Bad Request, 409 Conflict).
+- Implementasi logika penomoran NIM otomatis yang aman dari *race condition* saat proses persetujuan calon mahasiswa.
+- Penambahan endpoint GET statistik dan status pendaftaran menggunakan fungsi agregasi database (*GROUP BY*).
+- Penambahan skrip unit test komprehensif pada `backend/test_pmb.py` mencakup pengujian validasi, approval, dan statistik dengan hasil seluruh test **passed**.
+- Pemutakhiran dokumentasi API via Swagger/OpenAPI serta penjelasan format penomoran NIM.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Modul PMB kini memiliki fitur operasional yang lengkap, aman dari konkurensi data (*race condition*), serta memiliki cakupan pengujian unit test yang andal dan terdokumentasi dengan baik di Swagger.
+- **Kekurangan / Kompleksitas Tambahan**: Penanganan konkurensi pada pembuatan NIM memerlukan penanganan *transaction locking* yang teliti pada level database/repository.
+

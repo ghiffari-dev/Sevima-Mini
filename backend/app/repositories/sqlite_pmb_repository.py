@@ -73,14 +73,9 @@ class SQLitePMBRepository(IPMBRepository):
         row = cursor.fetchone()
         return row["nim"] if row and row["nim"] else None
 
-    def count_total_pendaftar(self) -> int:
+    def get_stats_by_status(self) -> Dict[str, int]:
         cursor = self.db.cursor()
-        cursor.execute("SELECT COUNT(*) AS total FROM calon_mahasiswa;")
-        row = cursor.fetchone()
-        return row["total"] if row else 0
-
-    def count_pendaftar_by_status(self, status: str) -> int:
-        cursor = self.db.cursor()
-        cursor.execute("SELECT COUNT(*) AS total FROM calon_mahasiswa WHERE status = ?;", (status,))
-        row = cursor.fetchone()
-        return row["total"] if row else 0
+        cursor.execute("SELECT status, COUNT(*) AS total FROM calon_mahasiswa GROUP BY status;")
+        rows = cursor.fetchall()
+        stats = {row["status"]: row["total"] for row in rows}
+        return stats
