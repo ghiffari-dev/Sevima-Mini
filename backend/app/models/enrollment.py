@@ -1,18 +1,21 @@
-from sqlalchemy import Column, String, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import String, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 class Enrollment(Base):
+    """Representasi baris detail pada kartu KRS (krs_detail).
+    Status persetujuan tidak disimpan per baris, melainkan di kartu PendaftaranKRS.
+    """
     __tablename__ = "enrollments"
 
-    id_enrollment = Column(String, primary_key=True, index=True)
-    status = Column(String, default="Active")
+    id_enrollment: Mapped[str] = mapped_column(String(50), primary_key=True, index=True)
 
-    mahasiswa_id = Column(String, ForeignKey("mahasiswas.id"), nullable=False)
-    kelas_id = Column(String, ForeignKey("kelass.id_kelas"), nullable=False)
-    pendaftaran_krs_id = Column(String, ForeignKey("pendaftaran_krss.idPendaftaran"), nullable=True)
+    mahasiswa_id: Mapped[str] = mapped_column(String(50), ForeignKey("mahasiswas.id"), nullable=False)
+    kelas_id: Mapped[str] = mapped_column(String(50), ForeignKey("kelass.id_kelas"), nullable=False)
+    pendaftaran_krs_id: Mapped[str | None] = mapped_column(String(50), ForeignKey("pendaftaran_krss.idPendaftaran"), nullable=True)
 
-    mahasiswa = relationship("Mahasiswa", back_populates="enrollments")
-    kelas = relationship("Kelas", back_populates="enrollments")
-    pendaftaran_krs = relationship("PendaftaranKRS", back_populates="enrollments")
-    grade = relationship("Grade", back_populates="enrollment", uselist=False, cascade="all, delete-orphan")
+    mahasiswa: Mapped["Mahasiswa"] = relationship("Mahasiswa", back_populates="enrollments")
+    kelas: Mapped["Kelas"] = relationship("Kelas", back_populates="enrollments")
+    pendaftaran_krs: Mapped["PendaftaranKRS | None"] = relationship("PendaftaranKRS", back_populates="enrollments")
+    grade: Mapped["Grade | None"] = relationship("Grade", back_populates="enrollment", uselist=False, cascade="all, delete-orphan")
+

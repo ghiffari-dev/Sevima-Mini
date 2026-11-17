@@ -3,7 +3,10 @@ from pydantic import BaseModel, Field
 class ScheduleBase(BaseModel):
     hari: str = Field(..., description="Senin, Selasa, dll")
     jam: str = Field(..., description="08:00 - 10:30")
+    jam_mulai: str | None = Field(default=None, description="Jam mulai format HH:MM, contoh: 08:00")
+    jam_selesai: str | None = Field(default=None, description="Jam selesai format HH:MM, contoh: 10:30")
     ruangan: str = Field(..., description="Lab A, R.101")
+
 
 class ScheduleResponse(ScheduleBase):
     id: int

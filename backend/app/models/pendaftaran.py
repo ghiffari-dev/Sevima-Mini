@@ -1,15 +1,15 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import String, Integer, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 class Pendaftaran(Base):
     __tablename__ = "pendaftarans"
 
-    idPendaftaran = Column(String, primary_key=True, index=True)
-    tanggalDaftar = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="Pending")
-    type = Column(String, nullable=False) # 'pmb', 'krs'
+    idPendaftaran: Mapped[str] = mapped_column(String(50), primary_key=True, index=True)
+    tanggalDaftar: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="Draft", nullable=False)
+    type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'pmb', 'krs'
 
     __mapper_args__ = {
         "polymorphic_identity": "pendaftaran",
@@ -19,28 +19,35 @@ class Pendaftaran(Base):
 class PendaftaranPMB(Pendaftaran):
     __tablename__ = "pendaftaran_pmbs"
 
-    idPendaftaran = Column(String, ForeignKey("pendaftarans.idPendaftaran"), primary_key=True)
-    pilihanJurusan = Column(String, nullable=False)
-    calon_mahasiswa_id = Column(Integer, ForeignKey("calon_mahasiswas.id"), nullable=False)
+    idPendaftaran: Mapped[str] = mapped_column(String(50), ForeignKey("pendaftarans.idPendaftaran"), primary_key=True)
+    pilihanJurusan: Mapped[str] = mapped_column(String(100), nullable=False)
+    calon_mahasiswa_id: Mapped[int] = mapped_column(Integer, ForeignKey("calon_mahasiswa.id"), nullable=False)
 
-    calon_mahasiswa = relationship("CalonMahasiswa")
-    payment = relationship("PembayaranPMB", back_populates="pendaftaran_pmb", uselist=False)
+    calon_mahasiswa: Mapped["CalonMahasiswa"] = relationship("CalonMahasiswa")
+    payment: Mapped["PembayaranPMB | None"] = relationship("PembayaranPMB", back_populates="pendaftaran_pmb", uselist=False)
 
     __mapper_args__ = {
         "polymorphic_identity": "pmb",
     }
 
 class PendaftaranKRS(Pendaftaran):
+    """Representasi 1 Kartu KRS (Header) per mahasiswa per semester.
+    Status persetujuan berada di level kartu, bukan per baris mata kuliah.
+    """
     __tablename__ = "pendaftaran_krss"
 
-    idPendaftaran = Column(String, ForeignKey("pendaftarans.idPendaftaran"), primary_key=True)
-    totalSks = Column(Integer, default=0)
-    mahasiswa_id = Column(String, ForeignKey("mahasiswas.id"), nullable=False)
+    idPendaftaran: Mapped[str] = mapped_column(String(50), ForeignKey("pendaftarans.idPendaftaran"), primary_key=True)
+    semester: Mapped[str] = mapped_column(String(20), default="2026-1", nullable=False)
+    totalSks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mahasiswa_id: Mapped[str] = mapped_column(String(50), ForeignKey("mahasiswas.id"), nullable=False)
+    dosen_pa_id: Mapped[str | None] = mapped_column(String(50), ForeignKey("dosens.id"), nullable=True)
 
-    mahasiswa = relationship("Mahasiswa", back_populates="pendaftaran_krs")
-    enrollments = relationship("Enrollment", back_populates="pendaftaran_krs", cascade="all, delete-orphan")
-    payment = relationship("PembayaranKRS", back_populates="pendaftaran_krs", uselist=False)
+    mahasiswa: Mapped["Mahasiswa"] = relationship("Mahasiswa", back_populates="pendaftaran_krs")
+    dosen_pa: Mapped["Dosen | None"] = relationship("Dosen", back_populates="krs_bimbingan")
+    enrollments: Mapped[list["Enrollment"]] = relationship("Enrollment", back_populates="pendaftaran_krs", cascade="all, delete-orphan")
+    payment: Mapped["PembayaranKRS | None"] = relationship("PembayaranKRS", back_populates="pendaftaran_krs", uselist=False)
 
     __mapper_args__ = {
         "polymorphic_identity": "krs",
     }
+

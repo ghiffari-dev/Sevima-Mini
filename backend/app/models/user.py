@@ -1,15 +1,15 @@
-from sqlalchemy import Column, String, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import String, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(String, primary_key=True, index=True)
-    nama = Column(String, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    role = Column(String, nullable=False)  # 'mahasiswa', 'dosen', 'admin', 'calon_mahasiswa'
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, index=True)
+    nama: Mapped[str] = mapped_column(String(150), nullable=False)
+    email: Mapped[str] = mapped_column(String(150), unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False)  # 'mahasiswa', 'dosen', 'admin', 'calon_mahasiswa'
 
     __mapper_args__ = {
         "polymorphic_identity": "user",
@@ -19,12 +19,12 @@ class User(Base):
 class Mahasiswa(User):
     __tablename__ = "mahasiswas"
 
-    id = Column(String, ForeignKey("users.id"), primary_key=True)
-    nim = Column(String, unique=True, index=True, nullable=False)
-    jurusan = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String(50), ForeignKey("users.id"), primary_key=True)
+    nim: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
+    jurusan: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    enrollments = relationship("Enrollment", back_populates="mahasiswa")
-    pendaftaran_krs = relationship("PendaftaranKRS", back_populates="mahasiswa")
+    enrollments: Mapped[list["Enrollment"]] = relationship("Enrollment", back_populates="mahasiswa")
+    pendaftaran_krs: Mapped[list["PendaftaranKRS"]] = relationship("PendaftaranKRS", back_populates="mahasiswa")
 
     __mapper_args__ = {
         "polymorphic_identity": "mahasiswa",
@@ -33,11 +33,12 @@ class Mahasiswa(User):
 class Dosen(User):
     __tablename__ = "dosens"
 
-    id = Column(String, ForeignKey("users.id"), primary_key=True)
-    nip = Column(String, unique=True, index=True, nullable=False)
-    keahlian = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String(50), ForeignKey("users.id"), primary_key=True)
+    nip: Mapped[str] = mapped_column(String(30), unique=True, index=True, nullable=False)
+    keahlian: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    kelas = relationship("Kelas", back_populates="dosen")
+    kelas: Mapped[list["Kelas"]] = relationship("Kelas", back_populates="dosen")
+    krs_bimbingan: Mapped[list["PendaftaranKRS"]] = relationship("PendaftaranKRS", back_populates="dosen_pa")
 
     __mapper_args__ = {
         "polymorphic_identity": "dosen",
@@ -46,9 +47,10 @@ class Dosen(User):
 class Admin(User):
     __tablename__ = "admins"
 
-    id = Column(String, ForeignKey("users.id"), primary_key=True)
-    admin_role = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String(50), ForeignKey("users.id"), primary_key=True)
+    admin_role: Mapped[str] = mapped_column(String(50), nullable=False)
 
     __mapper_args__ = {
         "polymorphic_identity": "admin",
     }
+

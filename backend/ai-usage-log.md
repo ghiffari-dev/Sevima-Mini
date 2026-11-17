@@ -118,3 +118,35 @@ Lengkapi fitur PMB pada backend dengan ketentuan:
 - **Kelebihan**: Modul PMB kini memiliki fitur operasional yang lengkap, aman dari konkurensi data (*race condition*), serta memiliki cakupan pengujian unit test yang andal dan terdokumentasi dengan baik di Swagger.
 - **Kekurangan / Kompleksitas Tambahan**: Penanganan konkurensi pada pembuatan NIM memerlukan penanganan *transaction locking* yang teliti pada level database/repository.
 
+
+## Log 06 — Refaktorisasi Model KRS ke SQLAlchemy 2.0 & Implementasi Chain of Responsibility untuk Validasi KRS
+
+### Tujuan
+Menyelaraskan seluruh model akademik (User, Course, Kelas, Schedule, PendaftaranKRS, Enrollment, Grade, Payment) ke sintaks modern **SQLAlchemy 2.0 (`Mapped` & `mapped_column`)**, menerapkan pola 2 tingkat pada KRS (`PendaftaranKRS` sebagai satu kartu/header dengan atribut `semester`, `status`, dan `dosen_pa_id`, serta `Enrollment` sebagai baris detail kartu tanpa status per baris), serta mengimplementasikan **Chain of Responsibility Pattern** untuk validasi KRS (`SKSValidator`, `DuplicateValidator`, `PrerequisiteValidator`, `ConflictValidator`) yang bebas query N+1.
+
+### Perintah (Prompt)
+"Implementasikan Chain of Responsibility pattern untuk validasi KRS:
+1. SKSValidator: cek total <= 24
+2. PrerequisiteValidator: cek nilai MK prasyarat
+3. ConflictValidator: cek bentrok jadwal
+4. DuplicateValidator: cek double enrollment
+Buat abstract Validator base class. Setiap validator return ValidationResult (pass/fail + message). Chain berhenti saat ada failure."
+
++ konteks dari saya:
+- Python 3.12+, SQLAlchemy 2.0 (`Mapped` & `mapped_column`), sesuaikan dengan nama model yang ada (`Course`, `Kelas`, `Schedule`, `PendaftaranKRS`, `Enrollment`, `Grade`).
+- Pastikan status KRS berada di level kartu (`PendaftaranKRS`), bukan per baris (`Enrollment`), serta tambahkan `semester` dan `dosen_pa_id` pada kartu KRS.
+- Nilai prasyarat minimal C dibandingkan menggunakan bobot numerik (`bobot >= 2.0`), bukan perbandingan string huruf mentah, dan harus lulus pada semester sebelumnya.
+- Cek bentrok jadwal menggunakan rumus irisan interval (`mulai_A < selesai_B` dan `mulai_B < selesai_A` pada hari yang sama), tepat 24 SKS masih diizinkan, pesan kegagalan wajib menyebut nama mata kuliah terkait, dan hindari query di dalam loop (N+1).
+
+### Hasil (Hasil Implementasi)
+- Refaktorisasi seluruh model di `backend/app/models/` (`user.py`, `course.py`, `pendaftaran.py`, `enrollment.py`, `grade.py`, `payment.py`) ke sintaks **SQLAlchemy 2.0 (`Mapped` & `mapped_column`)** serta perbaikan referensi ForeignKey `calon_mahasiswa.id`.
+- Pemisahan struktur KRS 2 tingkat: penambahan `semester` dan `dosen_pa_id` pada `PendaftaranKRS` (kartu KRS) dan penghapusan `status` per baris dari `Enrollment` (baris detail KRS).
+- Penambahan atribut `jam_mulai` dan `jam_selesai` pada model `Schedule` dan skema `course.py` untuk mendukung perhitungan irisan interval jadwal.
+- Pembuatan modul `backend/app/services/krs_validator.py` yang mengimplementasikan *Chain of Responsibility Pattern* (`Validator` abstract base class, `ValidationResult`, `SKSValidator`, `DuplicateValidator`, `PrerequisiteValidator`, `ConflictValidator`) serta fungsi `validate_krs_with_db()` menggunakan `selectinload` (bebas query N+1).
+- Penambahan pengujian unit di `backend/test_models_and_schemas.py` mencakup batas tepat 24 SKS vs 25 SKS, deteksi *double enrollment*, validasi prasyarat nilai D vs C pada semester sebelumnya, deteksi irisan interval jadwal, dan integrasi SQLAlchemy 2.0 dengan hasil **20 passed** secara keseluruhan (`pytest`).
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Desain validasi KRS memenuhi prinsip *Single Responsibility Principle* (SRP) dan *Open/Closed Principle* (OCP) melalui *Chain of Responsibility*, sehingga penambahan aturan validasi baru dapat dilakukan tanpa memodifikasi kode validator yang sudah ada. Selain itu, penggunaan bobot numerik (`bobot >= 2.0`), rumus irisan interval, dan *eager loading* (`selectinload`) menghindari bug klasik perbandingan string ASCII maupun masalah performa query N+1.
+- **Kekurangan / Kompleksitas Tambahan**: Memerlukan persiapan *context object* (`KRSValidationContext`) dengan *eager loading* di awal sebelum data diteruskan ke rantai validator.
+
+
