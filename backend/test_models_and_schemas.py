@@ -215,3 +215,95 @@ def test_validate_krs_with_sqlalchemy2_db():
         assert result.passed is True
 
 
+def test_krs_manager_and_matakuliah_self_referential_flow():
+    """Menguji MataKuliah (sd.prasyarat == [algoritma]), KRS, KRSDetail, dan KRSManager sesuai 8 slide dosen."""
+    from app.models.calon_mahasiswa import CalonMahasiswa
+    from app.models.jalur_masuk import JalurMasuk
+    from app.models.program_studi import ProgramStudi
+    from app.models.krs import KRS, KRSDetail, KRSStatus, MataKuliah
+    from app.services.krs_manager import KRSError, KRSManager
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+
+    with SessionLocal() as db:
+        prodi = ProgramStudi(kode="001", nama="Teknik Informatika", fakultas="Teknik")
+        jalur = JalurMasuk(nama="SNBP")
+        db.add_all([prodi, jalur])
+        db.flush()
+
+        mhs = CalonMahasiswa(
+            nama_lengkap="Budi Santoso",
+            email="budi@example.com",
+            phone="081234567890",
+            tanggal_lahir=date(2005, 5, 10),
+            program_studi_id=prodi.id,
+            jalur_masuk_id=jalur.id,
+            status="approved",
+            nim="2025001-0001",
+        )
+        algoritma = MataKuliah(
+            kode_mk="IF101",
+            nama="Algoritma",
+            sks=3,
+            hari=1,
+            jam_mulai=time(8, 0),
+            jam_selesai=time(10, 0),
+        )
+        sd = MataKuliah(
+            kode_mk="IF201",
+            nama="Struktur Data",
+            sks=3,
+            hari=2,
+            jam_mulai=time(8, 0),
+            jam_selesai=time(10, 0),
+            prasyarat=[algoritma],
+        )
+        kalkulus_bentrok = MataKuliah(
+            kode_mk="IF202",
+            nama="Kalkulus",
+            sks=3,
+            hari=2,
+            jam_mulai=time(9, 0),
+            jam_selesai=time(11, 0),
+        )
+        db.add_all([mhs, algoritma, sd, kalkulus_bentrok])
+        db.commit()
+
+        # Pastikan arah join self-referential tidak tertukar (Slide 2: sd.prasyarat == [algoritma])
+        assert sd.prasyarat == [algoritma]
+        assert algoritma.prasyarat == []
+
+        mgr_sem2 = KRSManager(db, semester="20252")
+
+        # 1. Gagal ambil Struktur Data karena Algoritma belum lulus di semester sebelumnya
+        with pytest.raises(KRSError, match="Prasyarat tidak terpenuhi"):
+            mgr_sem2.add_course("2025001-0001", "IF201")
+
+        # 2. Buat riwayat KRS semester 20251 yang sudah APPROVED dengan nilai Algoritma = 'B'
+        krs_sem1 = KRS(nim="2025001-0001", semester="20251", status=KRSStatus.APPROVED, dosen_pa_id=1)
+        krs_sem1.details.append(KRSDetail(kode_mk="IF101", nilai="B"))
+        db.add(krs_sem1)
+        db.commit()
+
+        # 3. Sekarang ambil Struktur Data di semester 20252 berhasil!
+        detail_sd = mgr_sem2.add_course("2025001-0001", "IF201")
+        assert detail_sd.kode_mk == "IF201"
+
+        # 4. Coba tambah Struktur Data lagi -> ditolak oleh DuplicateValidator ("Sudah ada di KRS")
+        with pytest.raises(KRSError, match="Sudah ada di KRS: Struktur Data"):
+            mgr_sem2.add_course("2025001-0001", "IF201")
+
+        # 5. Coba tambah Kalkulus yang jamnya beririsan di hari Selasa (09:00-11:00 vs 08:00-10:00) -> ditolak ConflictValidator
+        with pytest.raises(KRSError, match="bentrok"):
+            mgr_sem2.add_course("2025001-0001", "IF202")
+
+        # 6. Submit & Approve KRS, lalu coba ubah saat APPROVED -> ditolak karena bukan DRAFT/REVISION
+        mgr_sem2.submit_krs("2025001-0001")
+        mgr_sem2.approve_krs("2025001-0001", dosen_pa_id=10)
+        with pytest.raises(KRSError, match="tidak bisa diubah"):
+            mgr_sem2.remove_course("2025001-0001", "IF201")
+
+
+

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.course import Course, Kelas, Schedule
 from app.models.enrollment import Enrollment
-from app.models.grade import Grade
+from app.models.krs import KRS, KRSDetail, KRSStatus, MataKuliah, prerequisite
 from app.models.pendaftaran import PendaftaranKRS
 
 # Pemetaan bobot numerik standar untuk mencegah jebakan perbandingan string ASCII ('D' > 'C')
@@ -27,18 +27,38 @@ GRADE_WEIGHT_MAP: dict[str, float] = {
 }
 
 MIN_PASSING_WEIGHT: float = 2.0  # Minimal C (bobot >= 2.0)
-MAX_SKS_PER_SEMESTER: int = 24
+MAX_SKS: int = 24
+MAX_SKS_PER_SEMESTER: int = MAX_SKS
 
 
-@dataclass
+@dataclass(frozen=True)
 class ValidationResult:
-    """Hasil validasi dari setiap node pada Chain of Responsibility."""
-    passed: bool
-    message: str = "Validasi berhasil"
+    """Hasil validasi dari setiap node pada Chain of Responsibility (Slide 7)."""
+    ok: bool = True
+    message: str = ""
+
+    def __init__(self, ok: bool | None = None, message: str = "", *, passed: bool | None = None) -> None:
+        resolved_ok = passed if passed is not None else (True if ok is None else bool(ok))
+        object.__setattr__(self, "ok", resolved_ok)
+        object.__setattr__(self, "message", message)
+
+    @property
+    def passed(self) -> bool:
+        return self.ok
 
     @property
     def is_valid(self) -> bool:
-        return self.passed
+        return self.ok
+
+
+@dataclass
+class KRSContext:
+    """Konteks validasi saat menambahkan mata kuliah baru ke kartu KRS (Slide 7)."""
+    nim: str
+    semester: str
+    details: list[KRSDetail]  # MK lain yang sudah ada di KRS
+    mk_baru: MataKuliah
+    db: Session | None = None
 
 
 @dataclass
@@ -57,7 +77,7 @@ class SelectedClassItem:
     kode_mk: str
     nama_mk: str
     sks: int
-    prasyarat: list[tuple[str, str]] = field(default_factory=list)  # list of (kode_prasyarat, nama_prasyarat)
+    prasyarat: list[tuple[str, str]] = field(default_factory=list)
     schedules: list[ScheduleSlot] = field(default_factory=list)
 
 
@@ -69,33 +89,16 @@ class CompletedCourseRecord:
     semester: str
     nilai_huruf: str | None = None
     bobot: float | None = None
-    krs_status: str = "Approved"
+    krs_status: str = "APPROVED"
 
 
 @dataclass
 class KRSValidationContext:
-    """Konteks data yang sudah di-load di awal (bebas query N+1 di dalam loop validator)."""
+    """Konteks batch in-memory (mendukung pengujian tanpa DB maupun dengan DB)."""
     mahasiswa_id: str
     semester_aktif: str
     selected_classes: list[SelectedClassItem]
     completed_courses: list[CompletedCourseRecord] = field(default_factory=list)
-
-
-def parse_time_str(t_str: str) -> time:
-    """Mengubah string 'HH:MM' menjadi objek datetime.time."""
-    clean = t_str.strip()
-    parts = clean.split(":")
-    return time(int(parts[0]), int(parts[1]))
-
-
-def extract_schedule_interval(sched: Schedule) -> tuple[time, time]:
-    """Mengekstrak (jam_mulai, jam_selesai) dari model Schedule."""
-    if sched.jam_mulai and sched.jam_selesai:
-        return parse_time_str(sched.jam_mulai), parse_time_str(sched.jam_selesai)
-    if "-" in sched.jam:
-        start_s, end_s = sched.jam.split("-", 1)
-        return parse_time_str(start_s), parse_time_str(end_s)
-    raise ValueError(f"Format jam jadwal tidak valid: {sched.jam}")
 
 
 def resolve_grade_weight(bobot: float | None, nilai_huruf: str | None) -> float:
@@ -107,120 +110,232 @@ def resolve_grade_weight(bobot: float | None, nilai_huruf: str | None) -> float:
     return 0.0
 
 
+def prasyarat_belum_lulus(
+    db: Session | None,
+    nim: str,
+    kode_mk: str,
+    semester: str,
+    mk_obj: MataKuliah | None = None,
+) -> list[str]:
+    """Mencari daftar nama mata kuliah prasyarat yang belum lulus (nilai < C) di semester sebelumnya (Slide 8).
+    Menggunakan query terpusat (bebas N+1 query di dalam loop).
+    """
+    if db is None:
+        return []
+
+    target_mk = mk_obj
+    if target_mk is None:
+        stmt_mk = (
+            select(MataKuliah)
+            .where(MataKuliah.kode_mk == kode_mk)
+            .options(selectinload(MataKuliah.prasyarat))
+        )
+        target_mk = db.scalars(stmt_mk).first()
+
+    if target_mk is None or not target_mk.prasyarat:
+        return []
+
+    prereq_list = list(target_mk.prasyarat)
+    prereq_codes = [p.kode_mk for p in prereq_list]
+
+    # Ambil seluruh riwayat KRSDetail mahasiswa pada semester sebelumnya (< semester saat ini)
+    # yang kartu KRS-nya sudah APPROVED dalam satu kali query (bebas N+1)
+    stmt_passed = (
+        select(KRSDetail.kode_mk, KRSDetail.nilai)
+        .join(KRS, KRSDetail.krs_id == KRS.id)
+        .where(
+            KRS.nim == nim,
+            KRS.semester < semester,
+            KRS.status == KRSStatus.APPROVED,
+            KRSDetail.kode_mk.in_(prereq_codes),
+            KRSDetail.nilai.is_not(None),
+        )
+    )
+    rows = db.execute(stmt_passed).all()
+
+    lulus_codes: set[str] = set()
+    for r_kode, r_nilai in rows:
+        if resolve_grade_weight(None, r_nilai) >= MIN_PASSING_WEIGHT:
+            lulus_codes.add(r_kode)
+
+    kurang = [p.nama for p in prereq_list if p.kode_mk not in lulus_codes]
+    return kurang
+
+
 class Validator(ABC):
-    """Abstract base class untuk Chain of Responsibility validasi KRS."""
+    """Abstract base class untuk Chain of Responsibility validasi KRS (Slide 7)."""
+    _next: Validator | None = None
 
     def __init__(self) -> None:
-        self._next_validator: Validator | None = None
+        self._next = None
 
-    def set_next(self, validator: Validator) -> Validator:
-        self._next_validator = validator
-        return validator
+    def set_next(self, nxt: Validator) -> Validator:
+        self._next = nxt
+        return nxt
 
-    def validate(self, context: KRSValidationContext) -> ValidationResult:
-        result = self._check(context)
-        if not result.passed:
-            # Chain langsung berhenti saat ada failure
-            return result
-        if self._next_validator is not None:
-            return self._next_validator.validate(context)
-        return ValidationResult(passed=True, message="Seluruh validasi KRS berhasil")
+    def validate(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult:
+        hasil = self.check(ctx)
+        if not hasil.ok or self._next is None:
+            return hasil  # berhenti di kegagalan pertama
+        return self._next.validate(ctx)
 
     @abstractmethod
-    def _check(self, context: KRSValidationContext) -> ValidationResult:
-        pass
-
-
-class SKSValidator(Validator):
-    """1. SKSValidator: Cek total SKS <= 24 (tepat 24 SKS masih diizinkan)."""
-
-    def _check(self, context: KRSValidationContext) -> ValidationResult:
-        total_sks = sum(item.sks for item in context.selected_classes)
-        if total_sks > MAX_SKS_PER_SEMESTER:
-            daftar_mk = ", ".join(f"{item.nama_mk} ({item.sks} SKS)" for item in context.selected_classes)
-            return ValidationResult(
-                passed=False,
-                message=f"Total SKS ({total_sks} SKS) melebihi batas maksimal {MAX_SKS_PER_SEMESTER} SKS untuk mata kuliah: {daftar_mk}"
-            )
-        return ValidationResult(passed=True, message=f"Total SKS valid ({total_sks} SKS)")
+    def check(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult: ...
 
 
 class DuplicateValidator(Validator):
-    """4. DuplicateValidator: Cek double enrollment (MK yang sama tidak boleh diambil dua kali dalam satu KRS)."""
+    """Pos 1 — DuplicateValidator: Cek apakah mata kuliah sudah ada di KRS (Slide 8)."""
 
-    def _check(self, context: KRSValidationContext) -> ValidationResult:
+    def check(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult:
+        if isinstance(ctx, KRSContext):
+            if any(d.kode_mk == ctx.mk_baru.kode_mk for d in ctx.details):
+                return ValidationResult(False, f"Sudah ada di KRS: {ctx.mk_baru.nama}")
+            return ValidationResult(True)
+
         seen_courses: dict[str, str] = {}
-        for item in context.selected_classes:
+        for item in ctx.selected_classes:
             if item.kode_mk in seen_courses:
                 return ValidationResult(
-                    passed=False,
-                    message=f"Double enrollment terdeteksi: mata kuliah {item.nama_mk} ({item.kode_mk}) dipilih lebih dari satu kali dalam satu KRS"
+                    False,
+                    f"Sudah ada di KRS: {item.nama_mk} ({item.kode_mk})",
                 )
             seen_courses[item.kode_mk] = item.nama_mk
-        return ValidationResult(passed=True, message="Tidak ada duplikasi mata kuliah")
+        return ValidationResult(True)
+
+
+class SKSValidator(Validator):
+    """Pos 2 — SKSValidator: Cek apakah total SKS <= 24 (tepat 24 SKS masih diizinkan) (Slide 8)."""
+
+    def check(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult:
+        if isinstance(ctx, KRSContext):
+            total = sum(d.matakuliah.sks for d in ctx.details) + ctx.mk_baru.sks
+            if total > MAX_SKS:
+                return ValidationResult(
+                    False,
+                    f"Total SKS {total} melebihi batas {MAX_SKS} saat menambah {ctx.mk_baru.nama}",
+                )
+            return ValidationResult(True)
+
+        total_sks = sum(item.sks for item in ctx.selected_classes)
+        if total_sks > MAX_SKS:
+            daftar_mk = ", ".join(f"{item.nama_mk} ({item.sks} SKS)" for item in ctx.selected_classes)
+            return ValidationResult(
+                False,
+                f"Total SKS ({total_sks} SKS) melebihi batas {MAX_SKS} SKS untuk mata kuliah: {daftar_mk}",
+            )
+        return ValidationResult(True)
 
 
 class PrerequisiteValidator(Validator):
-    """2. PrerequisiteValidator: Cek nilai MK prasyarat >= C (bobot >= 2.0) pada semester sebelumnya."""
+    """Pos 3 — PrerequisiteValidator: Cek kelulusan MK prasyarat >= C di semester sebelumnya (Slide 8)."""
 
-    def _check(self, context: KRSValidationContext) -> ValidationResult:
-        # Kumpulkan mata kuliah yang sudah LULUS (bobot >= 2.0) pada SEMESTER SEBELUMNYA
+    def check(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult:
+        if isinstance(ctx, KRSContext):
+            kurang = prasyarat_belum_lulus(
+                ctx.db, ctx.nim, ctx.mk_baru.kode_mk, ctx.semester, mk_obj=ctx.mk_baru
+            )
+            if kurang:
+                return ValidationResult(
+                    False,
+                    f"Prasyarat tidak terpenuhi untuk {ctx.mk_baru.nama}: " + ", ".join(kurang),
+                )
+            return ValidationResult(True)
+
         passed_prereq_codes: set[str] = set()
-        for rec in context.completed_courses:
-            is_previous_semester = rec.semester < context.semester_aktif
+        for rec in ctx.completed_courses:
+            is_previous_semester = rec.semester < ctx.semester_aktif
             is_krs_approved = rec.krs_status.lower() in {"approved", "disetujui", "active", "lunas"}
             weight = resolve_grade_weight(rec.bobot, rec.nilai_huruf)
             if is_previous_semester and is_krs_approved and weight >= MIN_PASSING_WEIGHT:
                 passed_prereq_codes.add(rec.kode_mk)
 
-        for item in context.selected_classes:
-            for prereq_kode, prereq_nama in item.prasyarat:
-                if prereq_kode not in passed_prereq_codes:
-                    return ValidationResult(
-                        passed=False,
-                        message=(
-                            f"Prasyarat belum terpenuhi untuk mata kuliah {item.nama_mk} ({item.kode_mk}): "
-                            f"wajib lulus mata kuliah prasyarat {prereq_nama} ({prereq_kode}) minimal C pada semester sebelumnya"
-                        ),
-                    )
-        return ValidationResult(passed=True, message="Seluruh prasyarat mata kuliah terpenuhi")
+        for item in ctx.selected_classes:
+            kurang_nama = [
+                prereq_nama
+                for prereq_kode, prereq_nama in item.prasyarat
+                if prereq_kode not in passed_prereq_codes
+            ]
+            if kurang_nama:
+                return ValidationResult(
+                    False,
+                    f"Prasyarat tidak terpenuhi untuk {item.nama_mk}: " + ", ".join(kurang_nama),
+                )
+        return ValidationResult(True)
 
 
 class ConflictValidator(Validator):
-    """3. ConflictValidator: Cek bentrok jadwal menggunakan rumus irisan interval (mulai_A < selesai_B dan mulai_B < selesai_A)."""
+    """Pos 4 — ConflictValidator: Cek bentrok jadwal dengan rumus irisan interval (mulai_A < selesai_B dan mulai_B < selesai_A)."""
 
-    def _check(self, context: KRSValidationContext) -> ValidationResult:
-        n = len(context.selected_classes)
+    def check(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult:
+        if isinstance(ctx, KRSContext):
+            mk_b = ctx.mk_baru
+            for d in ctx.details:
+                mk_a = d.matakuliah
+                if mk_a.hari == mk_b.hari:
+                    # Rumus irisan interval: dua rentang waktu bertumpuk jika start_a < end_b DAN start_b < end_a
+                    if mk_a.jam_mulai < mk_b.jam_selesai and mk_b.jam_mulai < mk_a.jam_selesai:
+                        return ValidationResult(
+                            False,
+                            f"Jadwal {mk_b.nama} bentrok dengan {mk_a.nama}",
+                        )
+            return ValidationResult(True)
+
+        n = len(ctx.selected_classes)
         for i in range(n):
-            item_a = context.selected_classes[i]
+            item_a = ctx.selected_classes[i]
             for j in range(i + 1, n):
-                item_b = context.selected_classes[j]
+                item_b = ctx.selected_classes[j]
                 for sched_a in item_a.schedules:
                     for sched_b in item_b.schedules:
-                        if sched_a.hari.strip().lower() == sched_b.hari.strip().lower():
-                            # Rumus irisan interval: dua rentang waktu [start_a, end_a) dan [start_b, end_b) bertumpuk
-                            # jika dan hanya jika start_a < end_b DAN start_b < end_a
+                        if str(sched_a.hari).strip().lower() == str(sched_b.hari).strip().lower():
                             if sched_a.jam_mulai < sched_b.jam_selesai and sched_b.jam_mulai < sched_a.jam_selesai:
                                 return ValidationResult(
-                                    passed=False,
-                                    message=(
+                                    False,
+                                    (
                                         f"Jadwal bentrok pada hari {sched_a.hari} antara mata kuliah "
-                                        f"{item_a.nama_mk} ({sched_a.jam_mulai.strftime('%H:%M')}-{sched_a.jam_selesai.strftime('%H:%M')}) "
-                                        f"dan {item_b.nama_mk} ({sched_b.jam_mulai.strftime('%H:%M')}-{sched_b.jam_selesai.strftime('%H:%M')})"
+                                        f"{item_a.nama_mk} dan {item_b.nama_mk}"
                                     ),
                                 )
-        return ValidationResult(passed=True, message="Tidak ada jadwal kuliah yang bentrok")
+        return ValidationResult(True)
+
+
+def build_chain(vs: list[Validator]) -> Validator:
+    """Merangkai daftar validator menjadi Chain of Responsibility (Slide 7)."""
+    for a, b in zip(vs, vs[1:]):
+        a.set_next(b)
+    return vs[0]
+
+
+def default_validators() -> list[Validator]:
+    """Urutan standar sesuai Slide 6 & 8: Duplicate -> SKS -> Prerequisite -> Conflict
+    (paling murah & pesan paling tepat di depan).
+    """
+    return [
+        DuplicateValidator(),
+        SKSValidator(),
+        PrerequisiteValidator(),
+        ConflictValidator(),
+    ]
 
 
 def build_krs_validation_chain() -> Validator:
-    """Merangkai keempat validator sesuai urutan Chain of Responsibility."""
-    sks_validator = SKSValidator()
-    duplicate_validator = DuplicateValidator()
-    prerequisite_validator = PrerequisiteValidator()
-    conflict_validator = ConflictValidator()
+    """Helper pembangun rantai validator dengan urutan Duplicate -> SKS -> Prerequisite -> Conflict."""
+    return build_chain(default_validators())
 
-    sks_validator.set_next(duplicate_validator).set_next(prerequisite_validator).set_next(conflict_validator)
-    return sks_validator
+
+def parse_time_str(t_str: str) -> time:
+    clean = t_str.strip()
+    parts = clean.split(":")
+    return time(int(parts[0]), int(parts[1]))
+
+
+def extract_schedule_interval(sched: Schedule) -> tuple[time, time]:
+    if sched.jam_mulai and sched.jam_selesai:
+        return parse_time_str(sched.jam_mulai), parse_time_str(sched.jam_selesai)
+    if "-" in sched.jam:
+        start_s, end_s = sched.jam.split("-", 1)
+        return parse_time_str(start_s), parse_time_str(end_s)
+    raise ValueError(f"Format jam jadwal tidak valid: {sched.jam}")
 
 
 def validate_krs_with_db(
@@ -229,8 +344,7 @@ def validate_krs_with_db(
     kelas_ids: list[str],
     semester_aktif: str,
 ) -> ValidationResult:
-    """Menjalankan validasi KRS menggunakan SQLAlchemy 2.0 dengan eager loading (bebas query N+1 di dalam loop)."""
-    # 1. Batch query seluruh kelas yang dipilih beserta Course, Prasyarat, dan Schedules dalam 1 rangkaian query
+    """Validasi batch dengan eager loading (bebas query N+1)."""
     stmt_kelas = (
         select(Kelas)
         .where(Kelas.id_kelas.in_(kelas_ids))
@@ -245,7 +359,7 @@ def validate_krs_with_db(
     for kid in kelas_ids:
         k_obj = kelas_map.get(kid)
         if k_obj is None:
-            return ValidationResult(passed=False, message=f"Kelas dengan ID {kid} tidak ditemukan")
+            return ValidationResult(False, f"Kelas dengan ID {kid} tidak ditemukan")
         course_obj = k_obj.course
         prereqs = [(p.kode, p.nama) for p in course_obj.prasyarat]
         slots = []
@@ -263,7 +377,6 @@ def validate_krs_with_db(
             )
         )
 
-    # 2. Batch query riwayat Enrollment mahasiswa beserta Grade, Kelas->Course, dan PendaftaranKRS (tanpa N+1)
     stmt_history = (
         select(Enrollment)
         .where(Enrollment.mahasiswa_id == mahasiswa_id)

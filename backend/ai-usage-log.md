@@ -150,3 +150,30 @@ Buat abstract Validator base class. Setiap validator return ValidationResult (pa
 - **Kekurangan / Kompleksitas Tambahan**: Memerlukan persiapan *context object* (`KRSValidationContext`) dengan *eager loading* di awal sebelum data diteruskan ke rantai validator.
 
 
+## Log 07 — Penyelarasan 4 Tabel Modul KRS (`matakuliah`, `prerequisite`, `krs`, `krs_detail`), Migrasi Alembic, dan `KRSManager`
+
+### Tujuan
+Menyelaraskan implementasi modul KRS dengan spesifikasi arsitektur 4 tabel modul KRS (`matakuliah`, `prerequisite`, `krs`, `krs_detail` yang berelasi ke `calon_mahasiswa.nim`), menambahkan migrasi Alembic dengan *CHECK constraint* dan *UniqueConstraint*, menyeragamkan urutan rantai validator menjadi **`Duplicate -> SKS -> Prerequisite -> Conflict`** (dari operasi paling ringan ke paling berat), serta menyediakan layanan satu pintu **`KRSManager`** (`add_course`, `remove_course`, `validate_krs`, `submit_krs`, `approve_krs`) yang hanya mengizinkan perubahan saat kartu berstatus `DRAFT` atau `REVISION`.
+
+### Perintah (Prompt)
+Sesuaikan implementasi modul KRS dengan spesifikasi berikut:
+1. Buat 4 tabel modul KRS di SQLAlchemy 2.0 (`app/models/krs.py`) dan migrasi Alembic:
+   - `matakuliah` (`kode_mk` PK, `nama`, `sks`, `hari` int 1..6, `jam_mulai` Time, `jam_selesai` Time) dengan CHECK `sks BETWEEN 1 AND 4` dan `jam_mulai < jam_selesai`.
+   - `prerequisite` (`kode_mk`, `kode_prasyarat` PK gabungan merujuk ke `matakuliah.kode_mk`) dengan CHECK `kode_mk <> kode_prasyarat` dan verifikasi arah join `sd.prasyarat == [algoritma]`.
+   - `krs` (`id`, `nim` FK ke `calon_mahasiswa.nim`, `semester`, `status` enum `KRSStatus`: `DRAFT`, `SUBMITTED`, `APPROVED`, `REVISION`, `dosen_pa_id`) dengan `UniqueConstraint("nim", "semester")`.
+   - `krs_detail` (`id`, `krs_id` FK ke `krs.id`, `kode_mk` FK ke `matakuliah.kode_mk`, `nilai` nullable) dengan `UniqueConstraint("krs_id", "kode_mk")`.
+2. Sesuaikan `Validator`, `ValidationResult(ok: bool, message: str = "")`, `KRSContext`, dan `build_chain()` dengan urutan `DuplicateValidator -> SKSValidator -> PrerequisiteValidator -> ConflictValidator`.
+3. Buat `KRSManager` (`app/services/krs_manager.py`) dengan `add_course`, `remove_course` (hanya saat `DRAFT` atau `REVISION`), `validate_krs`, `submit_krs`, dan `approve_krs`.
+
+### Hasil (Hasil Implementasi)
+- Pembuatan model SQLAlchemy 2.0 di `backend/app/models/krs.py` (`MataKuliah`, `prerequisite`, `KRSStatus`, `KRS`, `KRSDetail`) dan skrip migrasi Alembic `backend/alembic/versions/8b2104krs005_tabel_krs.py` lengkap dengan `upgrade()`, `downgrade()`, `CheckConstraint`, dan `UniqueConstraint`.
+- Pembaruan `backend/app/services/krs_validator.py` dengan `ValidationResult(ok, message)`, `KRSContext(nim, semester, details, mk_baru, db)`, fungsi `prasyarat_belum_lulus()`, `build_chain()`, serta urutan rantai validator **`Duplicate -> SKS -> Prerequisite -> Conflict`**.
+- Pembuatan `backend/app/services/krs_manager.py` (`KRSManager` dan `KRSError`) sebagai satu pintu perubahan KRS dengan penguncian transaksi (`with_for_update()`) dan penjagaan state `EDITABLE = {KRSStatus.DRAFT, KRSStatus.REVISION}`.
+- Penambahan pengujian integrasi `test_krs_manager_and_matakuliah_self_referential_flow` di `backend/test_models_and_schemas.py` dengan hasil keseluruhan **21 passed** (`pytest`).
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Urutan validator `Duplicate -> SKS -> Prerequisite -> Conflict` memastikan pengecekan in-memory paling murah dieksekusi lebih dulu sebelum query database pada `PrerequisiteValidator`. Selain itu, pemisahan tanggung jawab antara `KRSManager` (alur use case & transaksi) dan `Validator` (aturan bisnis murni yang di-inject via constructor) mematuhi *Single Responsibility Principle* dan memudahkan pengujian unit.
+- **Kekurangan / Kompleksitas Tambahan**: Penggunaan *self-referential many-to-many* pada `MataKuliah.prasyarat` menuntut ketelitian pada definisi `primaryjoin` dan `secondaryjoin` agar arah relasi prasyarat tidak tertukar.
+
+
+
