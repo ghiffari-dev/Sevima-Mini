@@ -11,8 +11,18 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from app.models.base import Base
+
+
+class KRSError(ValueError):
+    """Exception dasar untuk pelanggaran aturan bisnis dan state machine KRS."""
+    pass
+
+
+class StateTransitionError(KRSError):
+    """Exception khusus ketika transisi status KRS tidak sah."""
+    pass
 
 
 prerequisite = Table(
@@ -53,6 +63,14 @@ class KRSStatus(str, enum.Enum):
     REVISION = "REVISION"
 
 
+# Tabel transisi berbasis dict[(state, aktor)] -> himpunan state tujuan yang diizinkan
+TRANSITIONS: dict[tuple[KRSStatus, str], set[KRSStatus]] = {
+    (KRSStatus.DRAFT, "mahasiswa"): {KRSStatus.SUBMITTED},
+    (KRSStatus.SUBMITTED, "dosen"): {KRSStatus.APPROVED, KRSStatus.REVISION},
+    (KRSStatus.REVISION, "mahasiswa"): {KRSStatus.SUBMITTED},
+}
+
+
 class KRS(Base):
     __tablename__ = "krs"
     __table_args__ = (UniqueConstraint("nim", "semester", name="uq_krs_nim_semester"),)
@@ -70,6 +88,56 @@ class KRS(Base):
     details: Mapped[list["KRSDetail"]] = relationship(
         "KRSDetail", back_populates="krs", cascade="all, delete-orphan"
     )
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("status", KRSStatus.DRAFT)
+        self._allow_status_change = True
+        try:
+            super().__init__(**kwargs)
+        finally:
+            self._allow_status_change = False
+
+    @validates("status")
+    def _validate_status_assignment(self, key: str, value: KRSStatus) -> KRSStatus:
+        if not getattr(self, "_allow_status_change", False):
+            raise StateTransitionError(
+                "Status KRS hanya boleh diubah lewat transition()"
+            )
+        return value if isinstance(value, KRSStatus) else KRSStatus(value)
+
+    def transition(
+        self,
+        new_status: KRSStatus,
+        actor: str = "mahasiswa",
+        dosen_id: int | None = None,
+    ) -> KRSStatus:
+        """Mengubah status KRS sesuai tabel transisi dict[(state, aktor)] dan aturan bisnis."""
+        if not isinstance(new_status, KRSStatus):
+            new_status = KRSStatus(new_status)
+
+        actor_norm = actor.strip().lower()
+        allowed_targets = TRANSITIONS.get((self.status, actor_norm), set())
+        if new_status not in allowed_targets:
+            raise StateTransitionError(
+                f"Transisi tidak diizinkan: {self.status.value} ke {new_status.value}"
+            )
+
+        if new_status == KRSStatus.SUBMITTED:
+            if not self.details:
+                raise StateTransitionError("KRS kosong tidak dapat di-submit")
+
+        if actor_norm == "dosen":
+            if self.dosen_pa_id is None or dosen_id != self.dosen_pa_id:
+                raise StateTransitionError(
+                    "Approve/revise hanya boleh dilakukan oleh Dosen PA mahasiswa ini"
+                )
+
+        self._allow_status_change = True
+        try:
+            self.status = new_status
+        finally:
+            self._allow_status_change = False
+        return self.status
 
 
 class KRSDetail(Base):

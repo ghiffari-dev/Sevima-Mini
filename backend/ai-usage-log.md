@@ -176,4 +176,38 @@ Sesuaikan implementasi modul KRS dengan spesifikasi berikut:
 - **Kekurangan / Kompleksitas Tambahan**: Penggunaan *self-referential many-to-many* pada `MataKuliah.prasyarat` menuntut ketelitian pada definisi `primaryjoin` dan `secondaryjoin` agar arah relasi prasyarat tidak tertukar.
 
 
+## Log 08 — Implementasi State Machine KRS (`TRANSITIONS dict[(state, aktor)]` & Method `transition()`)
+
+### Tujuan
+Mengimplementasikan *State Machine* KRS sesuai spesifikasi Minggu 06 Step 2 untuk mencegah 4 bug klasik AI: lompatan state ilegal (`DRAFT -> APPROVED`), ketiadaan validasi aktor & kepemilikan `krs.dosen_pa_id`, pengiriman KRS kosong, serta perubahan langsung `krs.status = ...` di luar `transition()`.
+
+### Perintah (Prompt)
+"Buat enum KRSStatus dan state transition:
+DRAFT -> SUBMITTED (mahasiswa submit)
+SUBMITTED -> APPROVED (dosen approve)
+SUBMITTED -> REVISION (dosen tolak)
+REVISION -> SUBMITTED (mahasiswa perbaiki)
+Buat method transition yang enforce aturan state. Tidak boleh DRAFT -> APPROVED langsung."
+
++ Tambahan prompt:
+"Gunakan tabel transisi dict[(state, aktor)].
+Approve/revise hanya oleh krs.dosen_pa_id.
+Tolak submit jika KRS kosong.
+Status hanya boleh diubah lewat transition().
+Pesan error bahasa Indonesia, contoh: 'Transisi tidak diizinkan: DRAFT ke APPROVED'.
+Sertakan pytest untuk semua transisi ilegal."
+
+### Hasil (Hasil Implementasi)
+- Penambahan tabel transisi `TRANSITIONS: dict[tuple[KRSStatus, str], set[KRSStatus]]` dan method `KRS.transition(new_status, actor, dosen_id)` di `backend/app/models/krs.py`.
+- Proteksi atribut `KRS.status` menggunakan `@validates("status")` agar penulisan langsung `krs.status = ...` di luar `transition()` otomatis ditolak dengan `StateTransitionError`.
+- Penegakan aturan KRS tidak boleh kosong saat menuju `SUBMITTED` serta validasi `dosen_id == self.dosen_pa_id` saat `actor == "dosen"` melakukan `APPROVED` atau `REVISION`.
+- Integrasi `submit_krs()`, `approve_krs()`, dan `revise_krs()` pada `KRSManager` (`backend/app/services/krs_manager.py`) agar seluruhnya memanggil `krs.transition(...)`.
+- Penambahan unit test parameterisasi untuk seluruh transisi ilegal, KRS kosong, dosen PA berbeda, dan direct assignment di `backend/test_models_and_schemas.py`.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Penggunaan tabel transisi `dict[(state, aktor)]` menggantikan percabangan `if-else` yang rawan bocor, menjamin hanya kombinasi `(state, aktor)` yang terdaftar yang dapat dieksekusi, serta mengunci mutasi status satu pintu melalui `transition()`.
+- **Kekurangan / Kompleksitas Tambahan**: Memerlukan penjagaan flag internal (`_allow_status_change`) pada model SQLAlchemy agar inisialisasi objek tetap berjalan normal namun mutasi langsung pasca-inisialisasi diblokir.
+
+
+
 

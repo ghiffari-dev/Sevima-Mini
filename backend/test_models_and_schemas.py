@@ -275,7 +275,7 @@ def test_krs_manager_and_matakuliah_self_referential_flow():
         assert sd.prasyarat == [algoritma]
         assert algoritma.prasyarat == []
 
-        mgr_sem2 = KRSManager(db, semester="20252")
+        mgr_sem2 = KRSManager(db, semester="20252", dosen_pa_id=10)
 
         # 1. Gagal ambil Struktur Data karena Algoritma belum lulus di semester sebelumnya
         with pytest.raises(KRSError, match="Prasyarat tidak terpenuhi"):
@@ -304,6 +304,89 @@ def test_krs_manager_and_matakuliah_self_referential_flow():
         mgr_sem2.approve_krs("2025001-0001", dosen_pa_id=10)
         with pytest.raises(KRSError, match="tidak bisa diubah"):
             mgr_sem2.remove_course("2025001-0001", "IF201")
+
+
+def _buat_krs_berisi(status, dosen_pa_id=10):
+    from app.models.krs import KRS, KRSDetail
+
+    krs = KRS(nim="2025001-0001", semester="20251", status=status, dosen_pa_id=dosen_pa_id)
+    krs.details.append(KRSDetail(kode_mk="IF101"))
+    return krs
+
+
+def test_krs_state_machine_valid_flow():
+    """Menguji seluruh alur transisi sah: DRAFT -> SUBMITTED -> REVISION -> SUBMITTED -> APPROVED."""
+    from app.models.krs import KRSStatus
+
+    krs = _buat_krs_berisi(KRSStatus.DRAFT, dosen_pa_id=10)
+    assert krs.transition(KRSStatus.SUBMITTED, actor="mahasiswa") == KRSStatus.SUBMITTED
+    assert krs.transition(KRSStatus.REVISION, actor="dosen", dosen_id=10) == KRSStatus.REVISION
+    assert krs.transition(KRSStatus.SUBMITTED, actor="mahasiswa") == KRSStatus.SUBMITTED
+    assert krs.transition(KRSStatus.APPROVED, actor="dosen", dosen_id=10) == KRSStatus.APPROVED
+
+
+@pytest.mark.parametrize(
+    "state_asal,state_tujuan,actor",
+    [
+        # Dari DRAFT (ilegal)
+        ("DRAFT", "DRAFT", "mahasiswa"),
+        ("DRAFT", "APPROVED", "mahasiswa"),
+        ("DRAFT", "APPROVED", "dosen"),
+        ("DRAFT", "REVISION", "mahasiswa"),
+        ("DRAFT", "REVISION", "dosen"),
+        ("DRAFT", "SUBMITTED", "dosen"),
+        # Dari SUBMITTED (ilegal, termasuk submit dua kali & mahasiswa approve sendiri)
+        ("SUBMITTED", "DRAFT", "mahasiswa"),
+        ("SUBMITTED", "DRAFT", "dosen"),
+        ("SUBMITTED", "SUBMITTED", "mahasiswa"),
+        ("SUBMITTED", "SUBMITTED", "dosen"),
+        ("SUBMITTED", "APPROVED", "mahasiswa"),
+        ("SUBMITTED", "REVISION", "mahasiswa"),
+        # Dari REVISION (ilegal, termasuk lompat ke APPROVED tanpa submit ulang)
+        ("REVISION", "DRAFT", "mahasiswa"),
+        ("REVISION", "DRAFT", "dosen"),
+        ("REVISION", "REVISION", "mahasiswa"),
+        ("REVISION", "REVISION", "dosen"),
+        ("REVISION", "APPROVED", "mahasiswa"),
+        ("REVISION", "APPROVED", "dosen"),
+        ("REVISION", "SUBMITTED", "dosen"),
+        # Dari APPROVED (final state, semua transisi keluar ilegal)
+        ("APPROVED", "DRAFT", "mahasiswa"),
+        ("APPROVED", "SUBMITTED", "mahasiswa"),
+        ("APPROVED", "REVISION", "dosen"),
+        ("APPROVED", "APPROVED", "dosen"),
+    ],
+)
+def test_krs_state_machine_all_illegal_transitions(state_asal, state_tujuan, actor):
+    """Menguji semua transisi ilegal dan memastikan pesan error bahasa Indonesia sesuai format."""
+    from app.models.krs import KRSStatus, StateTransitionError
+
+    krs = _buat_krs_berisi(KRSStatus(state_asal), dosen_pa_id=10)
+    expected_msg = f"Transisi tidak diizinkan: {state_asal} ke {state_tujuan}"
+    with pytest.raises(StateTransitionError, match=expected_msg):
+        krs.transition(KRSStatus(state_tujuan), actor=actor, dosen_id=10)
+
+
+def test_krs_state_machine_guards_empty_krs_wrong_dosen_and_direct_assign():
+    """Menguji penolakan KRS kosong, dosen PA berbeda, dan perubahan krs.status langsung."""
+    from app.models.krs import KRS, KRSStatus, StateTransitionError
+
+    # 1. Tolak submit jika KRS kosong
+    krs_kosong = KRS(nim="2025001-0001", semester="20251", status=KRSStatus.DRAFT, dosen_pa_id=10)
+    with pytest.raises(StateTransitionError, match="KRS kosong tidak dapat di-submit"):
+        krs_kosong.transition(KRSStatus.SUBMITTED, actor="mahasiswa")
+
+    # 2. Tolak approve/revise jika ditekan oleh dosen lain (bukan krs.dosen_pa_id)
+    krs_submitted = _buat_krs_berisi(KRSStatus.SUBMITTED, dosen_pa_id=10)
+    with pytest.raises(StateTransitionError, match="Dosen PA"):
+        krs_submitted.transition(KRSStatus.APPROVED, actor="dosen", dosen_id=99)
+    with pytest.raises(StateTransitionError, match="Dosen PA"):
+        krs_submitted.transition(KRSStatus.REVISION, actor="dosen", dosen_id=99)
+
+    # 3. Tolak penulisan krs.status = ... secara langsung di luar transition()
+    with pytest.raises(StateTransitionError, match="transition\\(\\)"):
+        krs_submitted.status = KRSStatus.APPROVED
+
 
 
 
