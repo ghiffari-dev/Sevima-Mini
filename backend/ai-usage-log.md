@@ -209,5 +209,31 @@ Sertakan pytest untuk semua transisi ilegal."
 - **Kekurangan / Kompleksitas Tambahan**: Memerlukan penjagaan flag internal (`_allow_status_change`) pada model SQLAlchemy agar inisialisasi objek tetap berjalan normal namun mutasi langsung pasca-inisialisasi diblokir.
 
 
+## Log 09 — Penyelarasan State Machine KRS (Enum `Actor`, `cek_transisi`, Kepemilikan 403 vs 409, Validasi Submit, Catatan Revisi, & Audit Log)
+
+### Tujuan
+Menyelaraskan implementasi State Machine KRS dengan keempat slide materi Minggu 06 (*Status yang tidak bisa dilompati*, *Empat state empat panah*, *Tabel transisi + satu pintu perubahan*, serta *Peran dan kepemilikan*) secara menyeluruh.
+
+### Perintah (Prompt)
+Analisis 4 slide materi Minggu 06 dan selaraskan kekurangan berikut pada modul KRS beserta pembaruan `ai-usage-log.md`:
+1. Menggunakan Enum `Actor` (`MAHASISWA`, `DOSEN_PA`) pada kunci tabel `TRANSITIONS: dict[tuple[KRSStatus, Actor], set[KRSStatus]]`.
+2. Memisahkan pengecekan ke method `cek_transisi()` dan `TransitionError` (dengan alias kompatibilitas `StateTransitionError`).
+3. Menegakkan dua lapis keamanan (peran & kepemilikan mahasiswa/dosen PA) dengan pemisahan status HTTP: orang salah $\rightarrow$ `403 Forbidden` (`KRSForbiddenError`), orang benar tapi status salah $\rightarrow$ `409 Conflict` (`TransitionError`).
+4. Menjalankan validasi KRS (`validate_krs`) otomatis saat `submit_krs`.
+5. Mewajibkan parameter `catatan` saat `revise_krs` dan menyimpannya ke kolom `catatan_revisi`.
+6. Mencatat `approved_at` (UTC) dan log (`logging`) saat `approve_krs` (plus migrasi Alembic kolom baru).
+
+### Hasil (Hasil Implementasi)
+- Pembaruan `backend/app/models/krs.py` dan `backend/app/models/__init__.py`: penambahan `Actor`, `TransitionError` (409), `KRSForbiddenError` (403), `cek_transisi()`, serta kolom `approved_at` dan `catatan_revisi` pada model `KRS`.
+- Pembuatan migrasi Alembic `backend/alembic/versions/9c3205krs006_krs_state_columns.py` dengan `upgrade()` dan `downgrade()` menggunakan `batch_alter_table`.
+- Pembaruan `KRSManager` (`backend/app/services/krs_manager.py`): pengecekan kepemilikan mahasiswa (`requester_nim`) dan dosen PA (`dosen_pa_id`), pemanggilan `_validate_krs_obj()` otomatis di `submit_krs()`, parameter wajib `catatan` di `revise_krs()`, serta pencatatan `logger.info` di `submit_krs()`, `approve_krs()`, dan `revise_krs()`.
+- Penambahan dan pembaruan unit test di `backend/test_models_and_schemas.py` (termasuk `test_krs_manager_ownership_validation_and_audit_guards` untuk 403 vs 409, validasi sebelum submit, catatan revisi wajib, `approved_at`, dan log audit).
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Seluruh mekanisme state machine, pemisahan peran dan kepemilikan (403 vs 409), validasi pra-submit, kewajiban alasan revisi, dan jejak audit persetujuan kini 100% selaras dengan spesifikasi desain Minggu 06 dan teruji otomatis lewat `pytest`.
+- **Kekurangan / Kompleksitas Tambahan**: Penambahan kolom `approved_at` dan `catatan_revisi` pada tabel `krs` memerlukan sinkronisasi migrasi Alembic pada database yang sudah ada.
+
+
+
 
 

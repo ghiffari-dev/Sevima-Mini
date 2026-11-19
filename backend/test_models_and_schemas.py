@@ -316,13 +316,23 @@ def _buat_krs_berisi(status, dosen_pa_id=10):
 
 def test_krs_state_machine_valid_flow():
     """Menguji seluruh alur transisi sah: DRAFT -> SUBMITTED -> REVISION -> SUBMITTED -> APPROVED."""
-    from app.models.krs import KRSStatus
+    from app.models.krs import Actor, KRSStatus
 
     krs = _buat_krs_berisi(KRSStatus.DRAFT, dosen_pa_id=10)
-    assert krs.transition(KRSStatus.SUBMITTED, actor="mahasiswa") == KRSStatus.SUBMITTED
-    assert krs.transition(KRSStatus.REVISION, actor="dosen", dosen_id=10) == KRSStatus.REVISION
-    assert krs.transition(KRSStatus.SUBMITTED, actor="mahasiswa") == KRSStatus.SUBMITTED
-    assert krs.transition(KRSStatus.APPROVED, actor="dosen", dosen_id=10) == KRSStatus.APPROVED
+    assert krs.transition(KRSStatus.SUBMITTED, actor=Actor.MAHASISWA) == KRSStatus.SUBMITTED
+    assert (
+        krs.transition(
+            KRSStatus.REVISION,
+            actor=Actor.DOSEN_PA,
+            dosen_id=10,
+            catatan="Tambahkan MK wajib",
+        )
+        == KRSStatus.REVISION
+    )
+    assert krs.catatan_revisi == "Tambahkan MK wajib"
+    assert krs.transition(KRSStatus.SUBMITTED, actor=Actor.MAHASISWA) == KRSStatus.SUBMITTED
+    assert krs.transition(KRSStatus.APPROVED, actor=Actor.DOSEN_PA, dosen_id=10) == KRSStatus.APPROVED
+    assert krs.approved_at is not None
 
 
 @pytest.mark.parametrize(
@@ -331,61 +341,193 @@ def test_krs_state_machine_valid_flow():
         # Dari DRAFT (ilegal)
         ("DRAFT", "DRAFT", "mahasiswa"),
         ("DRAFT", "APPROVED", "mahasiswa"),
-        ("DRAFT", "APPROVED", "dosen"),
+        ("DRAFT", "APPROVED", "dosen_pa"),
         ("DRAFT", "REVISION", "mahasiswa"),
-        ("DRAFT", "REVISION", "dosen"),
-        ("DRAFT", "SUBMITTED", "dosen"),
+        ("DRAFT", "REVISION", "dosen_pa"),
+        ("DRAFT", "SUBMITTED", "dosen_pa"),
         # Dari SUBMITTED (ilegal, termasuk submit dua kali & mahasiswa approve sendiri)
         ("SUBMITTED", "DRAFT", "mahasiswa"),
-        ("SUBMITTED", "DRAFT", "dosen"),
+        ("SUBMITTED", "DRAFT", "dosen_pa"),
         ("SUBMITTED", "SUBMITTED", "mahasiswa"),
-        ("SUBMITTED", "SUBMITTED", "dosen"),
+        ("SUBMITTED", "SUBMITTED", "dosen_pa"),
         ("SUBMITTED", "APPROVED", "mahasiswa"),
         ("SUBMITTED", "REVISION", "mahasiswa"),
         # Dari REVISION (ilegal, termasuk lompat ke APPROVED tanpa submit ulang)
         ("REVISION", "DRAFT", "mahasiswa"),
-        ("REVISION", "DRAFT", "dosen"),
+        ("REVISION", "DRAFT", "dosen_pa"),
         ("REVISION", "REVISION", "mahasiswa"),
-        ("REVISION", "REVISION", "dosen"),
+        ("REVISION", "REVISION", "dosen_pa"),
         ("REVISION", "APPROVED", "mahasiswa"),
-        ("REVISION", "APPROVED", "dosen"),
-        ("REVISION", "SUBMITTED", "dosen"),
+        ("REVISION", "APPROVED", "dosen_pa"),
+        ("REVISION", "SUBMITTED", "dosen_pa"),
         # Dari APPROVED (final state, semua transisi keluar ilegal)
         ("APPROVED", "DRAFT", "mahasiswa"),
         ("APPROVED", "SUBMITTED", "mahasiswa"),
-        ("APPROVED", "REVISION", "dosen"),
-        ("APPROVED", "APPROVED", "dosen"),
+        ("APPROVED", "REVISION", "dosen_pa"),
+        ("APPROVED", "APPROVED", "dosen_pa"),
     ],
 )
 def test_krs_state_machine_all_illegal_transitions(state_asal, state_tujuan, actor):
-    """Menguji semua transisi ilegal dan memastikan pesan error bahasa Indonesia sesuai format."""
-    from app.models.krs import KRSStatus, StateTransitionError
+    """Menguji semua transisi ilegal dan memastikan TransitionError (409) & pesan bahasa Indonesia."""
+    from app.models.krs import KRSStatus, TransitionError
 
     krs = _buat_krs_berisi(KRSStatus(state_asal), dosen_pa_id=10)
     expected_msg = f"Transisi tidak diizinkan: {state_asal} ke {state_tujuan}"
-    with pytest.raises(StateTransitionError, match=expected_msg):
+    with pytest.raises(TransitionError, match=expected_msg) as exc_info:
         krs.transition(KRSStatus(state_tujuan), actor=actor, dosen_id=10)
+    assert exc_info.value.status_code == 409
 
 
 def test_krs_state_machine_guards_empty_krs_wrong_dosen_and_direct_assign():
-    """Menguji penolakan KRS kosong, dosen PA berbeda, dan perubahan krs.status langsung."""
-    from app.models.krs import KRS, KRSStatus, StateTransitionError
+    """Menguji penolakan KRS kosong, dosen PA berbeda (403), catatan revisi wajib, dan direct assignment."""
+    from app.models.krs import (
+        Actor,
+        KRS,
+        KRSError,
+        KRSForbiddenError,
+        KRSStatus,
+        TransitionError,
+    )
 
     # 1. Tolak submit jika KRS kosong
     krs_kosong = KRS(nim="2025001-0001", semester="20251", status=KRSStatus.DRAFT, dosen_pa_id=10)
-    with pytest.raises(StateTransitionError, match="KRS kosong tidak dapat di-submit"):
-        krs_kosong.transition(KRSStatus.SUBMITTED, actor="mahasiswa")
+    with pytest.raises(KRSError, match="KRS kosong tidak dapat di-submit"):
+        krs_kosong.transition(KRSStatus.SUBMITTED, actor=Actor.MAHASISWA)
 
-    # 2. Tolak approve/revise jika ditekan oleh dosen lain (bukan krs.dosen_pa_id)
+    # 2. Tolak approve/revise jika ditekan oleh dosen lain (bukan krs.dosen_pa_id -> 403 Forbidden)
     krs_submitted = _buat_krs_berisi(KRSStatus.SUBMITTED, dosen_pa_id=10)
-    with pytest.raises(StateTransitionError, match="Dosen PA"):
-        krs_submitted.transition(KRSStatus.APPROVED, actor="dosen", dosen_id=99)
-    with pytest.raises(StateTransitionError, match="Dosen PA"):
-        krs_submitted.transition(KRSStatus.REVISION, actor="dosen", dosen_id=99)
+    with pytest.raises(KRSForbiddenError, match="Dosen PA") as exc_app:
+        krs_submitted.transition(KRSStatus.APPROVED, actor=Actor.DOSEN_PA, dosen_id=99)
+    assert exc_app.value.status_code == 403
 
-    # 3. Tolak penulisan krs.status = ... secara langsung di luar transition()
-    with pytest.raises(StateTransitionError, match="transition\\(\\)"):
+    with pytest.raises(KRSForbiddenError, match="Dosen PA") as exc_rev:
+        krs_submitted.transition(
+            KRSStatus.REVISION, actor=Actor.DOSEN_PA, dosen_id=99, catatan="Lengkapi SKS"
+        )
+    assert exc_rev.value.status_code == 403
+
+    # 3. Tolak revise jika catatan kosong atau hanya spasi
+    with pytest.raises(KRSError, match="Catatan revisi wajib diisi"):
+        krs_submitted.transition(KRSStatus.REVISION, actor=Actor.DOSEN_PA, dosen_id=10, catatan="")
+    with pytest.raises(KRSError, match="Catatan revisi wajib diisi"):
+        krs_submitted.transition(KRSStatus.REVISION, actor=Actor.DOSEN_PA, dosen_id=10, catatan="   ")
+
+    # 4. Tolak penulisan krs.status = ... secara langsung di luar transition()
+    with pytest.raises(TransitionError, match="transition\\(\\)"):
         krs_submitted.status = KRSStatus.APPROVED
+
+
+def test_krs_manager_ownership_validation_and_audit_guards(caplog):
+    """Menguji lapis peran & kepemilikan (403 vs 409), validasi saat submit, catatan revisi, serta log & approved_at."""
+    import logging
+    from app.models.calon_mahasiswa import CalonMahasiswa
+    from app.models.jalur_masuk import JalurMasuk
+    from app.models.program_studi import ProgramStudi
+    from app.models.krs import (
+        KRS,
+        KRSDetail,
+        KRSError,
+        KRSForbiddenError,
+        KRSStatus,
+        MataKuliah,
+        TransitionError,
+    )
+    from app.services.krs_manager import KRSManager
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+
+    with SessionLocal() as db:
+        prodi = ProgramStudi(kode="001", nama="Teknik Informatika", fakultas="Teknik")
+        jalur = JalurMasuk(nama="SNBP")
+        db.add_all([prodi, jalur])
+        db.flush()
+
+        mhs = CalonMahasiswa(
+            nama_lengkap="Siti Rahma",
+            email="siti@example.com",
+            phone="081234567891",
+            tanggal_lahir=date(2005, 6, 15),
+            program_studi_id=prodi.id,
+            jalur_masuk_id=jalur.id,
+            status="approved",
+            nim="2025001-0002",
+        )
+        algo = MataKuliah(
+            kode_mk="IF101",
+            nama="Algoritma",
+            sks=3,
+            hari=1,
+            jam_mulai=time(8, 0),
+            jam_selesai=time(10, 0),
+        )
+        sd = MataKuliah(
+            kode_mk="IF201",
+            nama="Struktur Data",
+            sks=3,
+            hari=2,
+            jam_mulai=time(8, 0),
+            jam_selesai=time(10, 0),
+            prasyarat=[algo],
+        )
+        db.add_all([mhs, algo, sd])
+        db.commit()
+
+        # Buat KRS DRAFT dengan MK yang prasyaratnya belum lulus (untuk menguji submit_krs menjalankan validate_krs)
+        krs_draft = KRS(nim="2025001-0002", semester="20252", status=KRSStatus.DRAFT, dosen_pa_id=10)
+        krs_draft.details.append(KRSDetail(kode_mk="IF201"))
+        db.add(krs_draft)
+        db.commit()
+
+        mgr = KRSManager(db, semester="20252", dosen_pa_id=10)
+
+        # 1. submit_krs gagal karena validate_krs mendeteksi prasyarat IF201 (Algoritma) belum lulus
+        with pytest.raises(KRSError, match="Validasi KRS gagal sebelum submit"):
+            mgr.submit_krs("2025001-0002", requester_nim="2025001-0002")
+
+        # 2. Mahasiswa lain mencoba mengakses/mengubah KRS -> 403 Forbidden
+        with pytest.raises(KRSForbiddenError) as exc_add:
+            mgr.add_course("2025001-0002", "IF101", requester_nim="2025001-9999")
+        assert exc_add.value.status_code == 403
+        with pytest.raises(KRSForbiddenError) as exc_rem:
+            mgr.remove_course("2025001-0002", "IF201", requester_nim="2025001-9999")
+        assert exc_rem.value.status_code == 403
+        with pytest.raises(KRSForbiddenError) as exc_sub:
+            mgr.submit_krs("2025001-0002", requester_nim="2025001-9999")
+        assert exc_sub.value.status_code == 403
+
+        # 3. Orang salah (bukan Dosen PA) menekan approve/revise bahkan saat DRAFT -> 403 Forbidden
+        with pytest.raises(KRSForbiddenError) as exc_wrong_dosen:
+            mgr.approve_krs("2025001-0002", dosen_pa_id=99)
+        assert exc_wrong_dosen.value.status_code == 403
+
+        # 4. Orang benar (Dosen PA = 10) tapi status salah (DRAFT) -> 409 Conflict
+        with pytest.raises(TransitionError) as exc_wrong_state:
+            mgr.approve_krs("2025001-0002", dosen_pa_id=10)
+        assert exc_wrong_state.value.status_code == 409
+
+        # Perbaiki KRS menjadi valid (hapus IF201, tambah IF101), lalu submit oleh pemilik
+        mgr.remove_course("2025001-0002", "IF201", requester_nim="2025001-0002")
+        mgr.add_course("2025001-0002", "IF101", requester_nim="2025001-0002")
+        submitted = mgr.submit_krs("2025001-0002", requester_nim="2025001-0002")
+        assert submitted.status == KRSStatus.SUBMITTED
+
+        # 5. revise_krs tanpa catatan ditolak, dengan catatan berhasil & menyimpan catatan_revisi
+        with pytest.raises(KRSError, match="Catatan revisi wajib diisi"):
+            mgr.revise_krs("2025001-0002", dosen_pa_id=10, catatan="  ")
+        revised = mgr.revise_krs("2025001-0002", dosen_pa_id=10, catatan="SKS terlalu sedikit")
+        assert revised.status == KRSStatus.REVISION
+        assert revised.catatan_revisi == "SKS terlalu sedikit"
+
+        # 6. Submit ulang lalu approve oleh Dosen PA -> approved_at terisi dan log tercatat
+        mgr.submit_krs("2025001-0002", requester_nim="2025001-0002")
+        with caplog.at_level(logging.INFO, logger="app.services.krs_manager"):
+            approved = mgr.approve_krs("2025001-0002", dosen_pa_id=10)
+        assert approved.status == KRSStatus.APPROVED
+        assert approved.approved_at is not None
+        assert any("KRS approved" in rec.message for rec in caplog.records)
+
 
 
 
