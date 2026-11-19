@@ -261,6 +261,38 @@ Menyempurnakan modul KRS dan dokumentasi arsitektur agar 100% selaras dengan kee
 - **Kekurangan / Kompleksitas Tambahan**: Penambahan tabel `krs_log` dan `notifikasi` serta kolom `version` menuntut pengelolaan transaksi (`commit` / `rollback`) yang konsisten di seluruh method `KRSManager`.
 
 
+## Log 11 — Implementasi Router API KRS, Exception Handler FastAPI, Property-Based Testing (Hypothesis), Challenge CSP Recommender, PR Template, & OPAR
+
+### Tujuan
+Melengkapi lapisan API HTTP FastAPI untuk modul KRS beserta *exception handler* global, menguji piramida pengujian secara utuh (Unit, Integration, API `TestClient`, dan *Property-Based Testing* menggunakan `hypothesis`), menambahkan fitur *KRS Recommendation* berbasis *Constraint Satisfaction Problem* (CSP *backtracking*) dengan verifikasi rantai validator, serta mendokumentasikan PR Template dan refleksi **OPAR** (*Observe, Plan, Act, Reflect*).
+
+### Perintah (Prompt)
+"Lengkapi modul KRS backend dengan lapisan API FastAPI, piramida pengujian, dan dokumentasi PR sebagai berikut:
+1. Buat router `/api/krs/{nim}/...` (POST `/courses`, DELETE `/courses/{kode_mk}`, POST `/submit`, POST `/approve`, POST `/revise`) lengkap dengan skema Pydantic dan `@app.exception_handler(KRSError)` agar status 400/403/409/422 dan pesan bahasa Indonesia keluar konsisten.
+2. Buat suite *property-based testing* menggunakan `hypothesis` untuk menguji langsung `SKSValidator` (total SKS diterima <= 24 pada 1000 contoh acak), `ConflictValidator` (tidak ada irisan jadwal pada 1000 contoh acak), dan seluruh 28 kombinasi transisi ilegal dari `itertools.product(KRSStatus, KRSStatus, Actor)` tanpa menyentuh DB.
+3. Buat API integration test via FastAPI `TestClient` yang memverifikasi error pesan prasyarat, jadwal bentrok, kode 400/403/409/422, optimistic lock versi basi, dan `KRSLockedError`.
+4. Tambahkan modul rekomendasi jadwal KRS bebas bentrok berbasis CSP *backtracking* (`recommend_krs_csp`) yang memprioritaskan MK wajib di atas pilihan dan memvalidasi hasil akhirnya melalui `default_validators()`, serta siapkan `.github/PULL_REQUEST_TEMPLATE.md` dan refleksi OPAR."
+
+### Hasil (Hasil Implementasi)
+- Pembaruan `backend/requirements.txt` (penambahan `hypothesis>=6.100.0`) dan penyelarasan format pesan di `backend/app/services/krs_validator.py` (`"Prasyarat tidak terpenuhi: ..."` dan `"Jadwal bentrok: ..."`).
+- Pembuatan modul CSP solver `backend/app/services/krs_recommender.py` (`CourseOffering`, `RecommendationResult`, `recommend_krs_csp`) yang memprioritaskan mata kuliah wajib di depan mata kuliah pilihan, mendukung kelas paralel, serta selalu menjalankan guardrail rantai `default_validators()` sebelum mengembalikan hasil.
+- Pembaruan `backend/app/schemas/krs.py` (`AddCourseRequest`, `ApproveKRSRequest`, `ReviseKRSRequest`, `CourseOfferingInput`, `RecommendKRSRequest`, `KRSActionResponse`, `KRSRecommendationResponse`), pembuatan router `backend/app/routers/krs.py` (menggunakan SQLAlchemy `Session` dari `app.core.database.get_db`), dan pendaftaran `@app.exception_handler(KRSError)` serta router `/api/krs` di `backend/app/main.py`.
+- Pembuatan `backend/tests/test_krs_property.py` (32 kasus test: `test_total_sks_tidak_pernah_lebih_dari_24` 1000 contoh, `test_mk_diterima_tidak_pernah_bentrok` 1000 contoh, `test_jumlah_kombinasi_transisi_ilegal_adalah_28`, 28 kasus `test_transisi_ilegal_ditolak`, serta 200 contoh properti `test_recommender_csp_properti_bebas_bentrok_dan_sks_valid`).
+- Pembuatan `backend/tests/test_krs_api.py` (6 API test via `TestClient` dengan SQLite in-memory `StaticPool`).
+- Pembuatan `.github/PULL_REQUEST_TEMPLATE.md` dan eksekusi seluruh test suite: **72 passed** (`test_models_and_schemas.py` + `test_krs_property.py`) dan **14 passed** (`test_pmb.py` + `test_krs_api.py`), total **86 passed**.
+
+### OPAR (Observe – Plan – Act – Reflect)
+- **Observe**: Masih terdapat celah potensi MK baru masuk ke kartu KRS `SUBMITTED`/`APPROVED` melalui tab lain (*race condition*), belum adanya pembuktian otomatis atas properti invarian sistem pada kombinasi acak tak terduga (SKS > 24, bentrok jadwal, 28 transisi ilegal), serta belum terujinya kode status HTTP (`400`/`403`/`409`/`422`) di lapisan API FastAPI.
+- **Plan**: Mengunci baris `krs` di seluruh method (`with_for_update()`), menambahkan *optimistic lock* (`version_id_col` + pembaruan `diubah_pada`), menyediakan endpoint `/api/krs/{nim}/...` dengan `@app.exception_handler(KRSError)`, membuktikan properti sistem via `hypothesis` (2×1000 contoh acak + 28 transisi ilegal + 200 contoh CSP) dan `TestClient`, serta mencatat limitasi secara jujur di PR Template.
+- **Act**: Mengimplementasikan penyempurnaan di `krs.py`, `krs_manager.py`, `krs_validator.py`, `krs_recommender.py`, `schemas/krs.py`, `routers/krs.py`, `main.py`, `tests/test_krs_property.py`, `tests/test_krs_api.py`, dan `.github/PULL_REQUEST_TEMPLATE.md`.
+- **Reflect**: SQLite tidak membuktikan *concurrent row-level lock* `FOR UPDATE` secara penuh seperti pada database server, sehingga verifikasi konkurensi lintas sesi tetap perlu diuji pada PostgreSQL/MySQL; selain itu, parameter `dosen_pa_id` pada endpoint `/approve` dan `/revise` saat ini masih dikirim melalui *request body* karena integrasi autentikasi JWT belum dihubungkan langsung ke router KRS.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Seluruh lapisan piramida pengujian (unit, integrasi `KRSManager`, properti `hypothesis`, dan API `TestClient`) terverifikasi lulus penuh (total **86 passed**), pesan error HTTP terstandarisasi lewat satu *exception handler*, dan fitur rekomendasi CSP tetap tunduk pada guardrail `default_validators()`.
+- **Kekurangan / Kompleksitas Tambahan**: Otorisasi berbasis token JWT untuk mengidentifikasi `dosen_pa_id` secara otomatis dari sesi login masih perlu ditambahkan pada iterasi integrasi autentikasi berikutnya.
+
+
+
 
 
 

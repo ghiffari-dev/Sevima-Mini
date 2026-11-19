@@ -237,7 +237,7 @@ class PrerequisiteValidator(Validator):
             if kurang:
                 return ValidationResult(
                     False,
-                    f"Prasyarat tidak terpenuhi untuk {ctx.mk_baru.nama}: " + ", ".join(kurang),
+                    f"Prasyarat tidak terpenuhi: {', '.join(kurang)} (untuk {ctx.mk_baru.nama})",
                 )
             return ValidationResult(True)
 
@@ -258,7 +258,7 @@ class PrerequisiteValidator(Validator):
             if kurang_nama:
                 return ValidationResult(
                     False,
-                    f"Prasyarat tidak terpenuhi untuk {item.nama_mk}: " + ", ".join(kurang_nama),
+                    f"Prasyarat tidak terpenuhi: {', '.join(kurang_nama)} (untuk {item.nama_mk})",
                 )
         return ValidationResult(True)
 
@@ -276,7 +276,7 @@ class ConflictValidator(Validator):
                     if mk_a.jam_mulai < mk_b.jam_selesai and mk_b.jam_mulai < mk_a.jam_selesai:
                         return ValidationResult(
                             False,
-                            f"Jadwal {mk_b.nama} bentrok dengan {mk_a.nama}",
+                            f"Jadwal bentrok: {mk_b.nama} bertabrakan dengan {mk_a.nama}",
                         )
             return ValidationResult(True)
 
