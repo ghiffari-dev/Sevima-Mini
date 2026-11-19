@@ -79,6 +79,22 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
   1. *Pessimistic Lock*: Seluruh operasi pada `KRSManager` (`add_course`, `remove_course`, `submit_krs`, `approve_krs`, `revise_krs`) mengambil baris kartu lewat `_krs_terkunci()` yang menggunakan `.with_for_update()` dan memeriksa status setelah kunci diperoleh.
   2. *Optimistic Lock*: Model `KRS` dilengkapi kolom `version` (`__mapper_args__ = {"version_id_col": version}`) dan `diubah_pada`. Setiap penambahan/penghapusan `krs_detail` menyentuh `krs.diubah_pada` agar `version` pada baris `krs` selalu naik, sehingga persetujuan dari layar Dosen PA yang "basi" (versi lama) otomatis ditolak dengan `409 Conflict` (*"KRS sudah berubah, muat ulang"*).
 
+### 3.14 Modul Jadwal & Ruangan: Interval Tree & Deteksi Bentrok 3 Dimensi
+- **Pemodelan Terhubung (`ruangan` + `jadwal_kuliah`)**: Menambahkan model `Ruangan` dan `JadwalKuliah` pada `backend/app/models/schedule.py` yang berelasi langsung ke `matakuliah.kode_mk` (tanpa membongkar model legacy `Schedule` di `course.py`), sehingga setiap perubahan jadwal langsung mengetahui daftar KRS mahasiswa yang mengambil mata kuliah terkait serta memvalidasi batasan kapasitas ruangan (`enrolled_count <= kapasitas`).
+- **Interval Tree untuk Irisan Waktu**: Pengecekan tumpang tindih jam menggunakan struktur data *Augmented Binary Search Tree* (`IntervalTree` dengan atribut `max_end` dan interval half-open `[start, end)`) per hari sehingga jadwal bersebelahan (`08:00-10:00` vs `10:00-12:00`) tidak dianggap bentrok, serta mengklasifikasikan konflik menjadi `room_conflict` (ruangan sama), `lecturer_conflict` (dosen sama), dan `time_overlap` (mahasiswa/MK sama atau irisan umum).
+
+### 3.15 Observer Pattern (`ScheduleSubject` & `NotificationManager`)
+- **Publisher–Subscriber Terpisah**: `ScheduleSubject` dan turunannya `NotificationManager` mengelola daftar subscriber secara dinamis lewat `attach()`, `detach()`, dan `notify(event_type, schedule_data)`.
+- **Multi-Stakeholder & Simulasi Medium**: Disediakan tiga observer konkret — `StudentObserver` (simulasi Email & Push), `LecturerObserver` (simulasi Email & SMS), serta `AdminObserver` (simulasi Email, SMS, & Push) — yang menuliskan log ke logger `schedule.notifications` dan menyimpan riwayat ringkas di memori untuk ditampilkan di Conflict Resolver UI.
+
+### 3.16 Hybrid AI-Powered Rescheduler dengan Guardrail Deterministik
+- **Mode Hybrid (`AI + Rule-Based Fallback`)**: `suggest_alternative_schedules` dapat memanggil Gemini/OpenAI API via `httpx` ketika `GEMINI_API_KEY` atau `OPENAI_API_KEY` tersedia di `.env`, dan otomatis beralih ke mesin skor CSP/aturan lokal ketika API key tidak diisi, kuota habis, atau saat pengujian offline.
+- **Guardrail Anti-Halusinasi**: Setiap rekomendasi JSON dari LLM (`{hari, jam, ruangan, reason}`) wajib lolos verifikasi ulang deterministik terhadap kapasitas ruangan (`kapasitas >= enrolled`), bebas bentrok ruangan, dan bebas bentrok dosen sebelum dikirim ke Admin UI.
+
+### 3.17 Sinkronisasi Jadwal ke KRS (`invalidate_by_schedule_change -> REVISION`)
+- **Pemeliharaan Invarian State Machine KRS**: Alih-alih menambah status/aktor baru yang melanggar ruang kombinasi state machine KRS (`4 status x 2 aktor`), perubahan atau penghapusan jadwal pada `SchedulingService` memanggil method khusus `KRS.invalidate_by_schedule_change(reason)` dalam satu transaksi ACID.
+- **Kembali ke `REVISION`**: KRS yang berstatus `SUBMITTED`, `APPROVED`, maupun `REVISION` otomatis dikembalikan ke status `REVISION` (`approved_at = None`, `catatan_revisi` diisi keterangan perubahan jadwal, `diubah_pada` diperbarui agar `version` naik), disertai pencatatan `KRSLog` dan `Notifikasi` agar mahasiswa langsung mengetahui alasan dan dapat mengajukan ulang lewat `KRSManager`.
+
 ## 4. Trade-off yang Dipertimbangkan
 1. **Inheritance & Polymorphism vs Flat Database Models**
    - *Kelebihan*: Menerapkan *Open/Closed Principle* dan *Liskov Substitution Principle* secara ketat pada domain OOP.
@@ -101,4 +117,10 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 7. **Tabel Transisi State Machine Sendiri vs Library State Machine Eksternal**
    - *Kelebihan*: Tanpa dependensi tambahan, terintegrasi langsung dengan validator ORM SQLAlchemy (`@validates("status")`), sangat mudah diuji dan dijelaskan saat viva untuk domain 4 state KRS.
    - *Kekurangan*: Fitur otomatisasi seperti pembuatan diagram visual otomatis atau *hook on_enter/on_exit* deklaratif harus ditulis secara eksplisit di dalam method `transition()` dan `KRSManager`.
+8. **Hybrid AI Rescheduler + Guardrail Deterministik vs Ketergantungan Penuh pada LLM**
+   - *Kelebihan*: Tetap menghasilkan 3 rekomendasi valid secara offline dan deterministik saat pengujian maupun tanpa API key, serta melindungi Admin dari saran jadwal bentrok akibat halusinasi LLM.
+   - *Kekurangan*: Penjelasan (`reason`) pada mode fallback lebih terstruktur/templat dibandingkan kalimat bebas dari LLM.
+9. **Invalidasi KRS ke Status `REVISION` vs Status Terpisah `INVALIDATED`**
+   - *Kelebihan*: Mahasiswa dapat langsung memperbarui dan mengajukan ulang KRS melalui alur `KRSManager` (`REVISION -> SUBMITTED`) tanpa memperbesar tabel transisi state machine maupun merusak pengujian 28 transisi ilegal.
+   - *Kekurangan*: Pembedaan antara revisi oleh Dosen PA dan revisi akibat perubahan jadwal bergantung pada `catatan_revisi` serta riwayat `KRSLog` (`invalidate_schedule_change`).
 

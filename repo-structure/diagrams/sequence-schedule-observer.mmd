@@ -1,0 +1,69 @@
+%% Sequence Diagram - Modul Jadwal & Ruangan (Observer Pattern & KRS Invalidation)
+sequenceDiagram
+    autonumber
+    actor Admin as Admin Akademik
+    participant UI as ConflictResolverUI
+    participant Service as SchedulingService
+    participant Detector as "IntervalTree / ConflictDetector"
+    participant DB as "Database (Jadwal & KRS)"
+    participant Subject as "NotificationManager (ScheduleSubject)"
+    participant StudentObs as StudentObserver
+    participant LecturerObs as LecturerObserver
+    participant AdminObs as AdminObserver
+    participant Log as "NotificationLog (Email/SMS/Push)"
+
+    Admin->>UI: Buka dashboard /dashboard/conflicts
+    UI->>Service: GET /api/schedules/conflicts
+    activate Service
+    Service->>Detector: detect_schedule_conflict(schedules)
+    activate Detector
+    Detector-->>Service: Daftar bentrok (room_conflict, lecturer_conflict, time_overlap)
+    deactivate Detector
+    Service-->>UI: Tampilkan daftar jadwal bentrok
+    deactivate Service
+
+    Admin->>UI: Klik "Saran Alternatif AI" pada jadwal bentrok
+    UI->>Service: POST /api/schedules/{id}/suggest-alternatives
+    activate Service
+    Service-->>UI: 3 rekomendasi alternatif jadwal (JSON)
+    deactivate Service
+
+    Admin->>UI: Klik "Terapkan Jadwal" pada salah satu saran
+    UI->>Service: PUT /api/schedules/{id}
+    activate Service
+    Service->>Detector: Cek kapasitas ruangan & bentrok 3D
+    activate Detector
+    Detector-->>Service: Valid (kapasitas cukup & bebas bentrok)
+    deactivate Detector
+
+    Service->>DB: Update jadwal_kuliah & sinkronkan matakuliah (ACID)
+    activate DB
+    Service->>DB: Pindahkan KRS terdampak ke REVISION + tulis KRSLog & Notifikasi
+    DB-->>Service: Commit transaksi berhasil
+    deactivate DB
+
+    Service->>Subject: notify("SCHEDULE_CHANGED", schedule_data)
+    activate Subject
+    Subject->>StudentObs: update(event)
+    activate StudentObs
+    StudentObs->>Log: Log simulasi EMAIL & PUSH ke mahasiswa terdampak
+    StudentObs-->>Subject: NotificationRecord[]
+    deactivate StudentObs
+
+    Subject->>LecturerObs: update(event)
+    activate LecturerObs
+    LecturerObs->>Log: Log simulasi EMAIL & SMS ke dosen pengampu
+    LecturerObs-->>Subject: NotificationRecord[]
+    deactivate LecturerObs
+
+    Subject->>AdminObs: update(event)
+    activate AdminObs
+    AdminObs->>Log: Log simulasi EMAIL, SMS, & PUSH ke admin akademik
+    AdminObs-->>Subject: NotificationRecord[]
+    deactivate AdminObs
+
+    Subject-->>Service: Ringkasan notifikasi terkirim
+    deactivate Subject
+    Service-->>UI: Response jadwal baru, KRS terdampak -> REVISION, & log notifikasi
+    deactivate Service
+    UI-->>Admin: Tampilkan status sukses & pembaruan log Observer

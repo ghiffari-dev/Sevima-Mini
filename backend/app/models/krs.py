@@ -229,6 +229,21 @@ class KRS(Base):
             self._allow_status_change = False
         return self.status
 
+    def invalidate_by_schedule_change(self, reason: str) -> KRSStatus:
+        """Mengembalikan status KRS ke REVISION saat jadwal mata kuliah berubah/dihapus."""
+        if not reason or not reason.strip():
+            raise KRSError("Alasan invalidasi jadwal wajib diisi")
+
+        self.catatan_revisi = reason.strip()
+        self.approved_at = None
+        self.diubah_pada = datetime.now(timezone.utc)
+        self._allow_status_change = True
+        try:
+            self.status = KRSStatus.REVISION
+        finally:
+            self._allow_status_change = False
+        return self.status
+
 
 class KRSDetail(Base):
     __tablename__ = "krs_detail"

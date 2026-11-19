@@ -292,6 +292,42 @@ Melengkapi lapisan API HTTP FastAPI untuk modul KRS beserta *exception handler* 
 - **Kekurangan / Kompleksitas Tambahan**: Otorisasi berbasis token JWT untuk mengidentifikasi `dosen_pa_id` secara otomatis dari sesi login masih perlu ditambahkan pada iterasi integrasi autentikasi berikutnya.
 
 
+## Log 12 — Modul Jadwal & Ruangan (Minggu 7–8): Interval Tree, Observer Pattern, Hybrid AI Rescheduler, Conflict Resolver UI, & Invalidasi KRS
+
+### Tujuan
+Mengimplementasikan seluruh kebutuhan **Minggu 7–8: Modul Jadwal & Ruangan** pada branch `tugas-7`, mencakup layanan penjadwalan & deteksi bentrok 3 dimensi berbasis *Interval Tree*, notifikasi berbasis *Observer Pattern*, antarmuka admin *Conflict Resolver UI* dengan saran alternatif AI (*hybrid*), serta sinkronisasi otomatis yang menginvalidasi KRS terdampak ke status `REVISION`.
+
+### Perintah (Prompt)
+"Implementasikan Modul Jadwal & Ruangan (Minggu 7–8) yang terintegrasi dengan modul KRS:
+1. Scheduling Service: CRUD jadwal + ruangan (`Ruangan`, `JadwalKuliah` + migrasi Alembic), algoritma `detect_schedule_conflict()` menggunakan *Interval Tree* untuk mendeteksi `room_conflict`, `lecturer_conflict`, dan `time_overlap`, serta validasi kapasitas ruangan (`enrolled <= kapasitas`).
+2. Observer Pattern: `ScheduleSubject` dan `NotificationManager` dengan `StudentObserver`, `LecturerObserver`, dan `AdminObserver` menggunakan simulasi Email/SMS/Push via log.
+3. Conflict Resolver UI & Hybrid AI Rescheduler: halaman web `/dashboard/conflicts` beserta endpoint `/api/schedules/{id}/suggest-alternatives` yang menghasilkan 3 opsi jadwal pengganti (`[{hari, jam, ruangan, reason}]`) melalui LLM API (jika tersedia di `.env`) dengan *guardrail* deterministik dan *fallback* algoritmik lokal.
+4. Integrasi KRS: setiap perubahan/penghapusan jadwal otomatis memindahkan KRS terdampak ke status `REVISION` (`invalidate_by_schedule_change`) beserta pencatatan `KRSLog` dan `Notifikasi` dalam satu transaksi ACID tanpa mematahkan test state machine sebelumnya.
+5. Testing & Dokumentasi: buat `backend/tests/test_schedule.py`, sequence diagram Observer Pattern (`repo-structure/diagrams/sequence-schedule-observer.mmd`), serta perbarui ADR dan README."
+
+### Hasil (Hasil Implementasi)
+- Pembaruan `backend/app/core/config.py` untuk dukungan opsional `GEMINI_API_KEY`, `OPENAI_API_KEY`, dan `AI_MODEL` di `.env`.
+- Pembuatan model SQLAlchemy `Ruangan` & `JadwalKuliah` (`backend/app/models/schedule.py`), ekspor di `backend/app/models/__init__.py`, dan migrasi Alembic `backend/alembic/versions/a1b2c3sch007_tabel_jadwal_ruangan.py`.
+- Pembaruan `backend/app/models/krs.py` dengan method `KRS.invalidate_by_schedule_change()` yang menjaga `@validates("status")` dan 28 kombinasi transisi ilegal tetap utuh.
+- Pembuatan `backend/app/services/interval_tree.py` (`IntervalTree`, `to_minutes`) dan `backend/app/services/conflict_detector.py` (`detect_schedule_conflict`, `check_room_capacity`).
+- Pembuatan `backend/app/services/schedule_observer.py` (`ScheduleSubject`, `NotificationManager`, `StudentObserver`, `LecturerObserver`, `AdminObserver`).
+- Pembuatan `backend/app/services/schedule_recommender.py` (`suggest_alternative_schedules` hybrid AI + *guardrail* + *rule-based fallback*) dan `backend/app/services/scheduling_service.py` (CRUD, invalidasi KRS ACID, & seeder demo).
+- Pembuatan skema `backend/app/schemas/schedule.py`, router `backend/app/routers/schedule.py`, halaman UI `backend/app/static/conflict_resolver.html`, dan integrasi di `backend/app/main.py` (`/api/schedules` & `/dashboard/conflicts`).
+- Pembuatan suite pengujian `backend/tests/test_schedule.py` serta diagram sekuens `repo-structure/diagrams/sequence-schedule-observer.mmd` dan pembaruan ADR (`3.14`–`3.17`).
+- Verifikasi migrasi Alembic (`a1b2c3sch007 (head)`) pada `backend/pmb.db` maupun pengujian *upgrade/downgrade/re-upgrade* terisolasi, serta eksekusi seluruh test suite (`pytest`) dengan hasil **95 passed** (**72 passed** pada `test_models_and_schemas.py` + `test_krs_property.py` dan **23 passed** pada `test_pmb.py` + `test_krs_api.py` + `test_schedule.py`).
+
+### OPAR (Observe – Plan – Act – Reflect)
+- **Observe**: Modul KRS sebelumnya menyimpan waktu langsung pada `MataKuliah` tanpa entitas `Ruangan`/`Dosen`/`Kapasitas`, sementara `KRSStatus` dan `Actor` diuji ketat oleh `test_krs_property.py` (28 kombinasi ilegal) sehingga menambah enum baru akan merusak invarian lama.
+- **Plan**: Membuat tabel `ruangan` dan `jadwal_kuliah` yang tertaut ke `matakuliah.kode_mk` (sekaligus menyinkronkan jam `MataKuliah` untuk validator KRS), menambah `KRS.invalidate_by_schedule_change()` khusus ke status `REVISION`, membangun *Interval Tree*, *Observer Pattern*, *Hybrid AI Rescheduler*, dan dashboard HTML mandiri di FastAPI.
+- **Act**: Mengimplementasikan seluruh modul layanan, migrasi, router, UI admin, test suite (`test_schedule.py`), sequence diagram Observer, dan ADR 3.14–3.17.
+- **Reflect**: Simulasi notifikasi Email/SMS/Push dan penyimpanan log riwayat di `NotificationManager` saat ini berjalan di memori dan `logging`; untuk produksi perlu diintegrasikan ke message broker/SMTP/gateway serta tabel log notifikasi permanen bila dibutuhkan riwayat lintas restart server.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Deteksi bentrok 3D berjalan deterministik via *Interval Tree*, notifikasi multi-stakeholder terdekupel rapi lewat *Observer Pattern*, saran penjadwalan ulang tetap aman berkat *guardrail* anti-halusinasi, dan integrasi invalidasi KRS ke `REVISION` bersifat atomik (ACID) tanpa merusak 86 test sebelumnya.
+- **Kekurangan / Kompleksitas Tambahan**: Penambahan tabel `ruangan` dan `jadwal_kuliah` mengharuskan `alembic upgrade head` dijalankan pada database yang sudah ada sebelum memakai endpoint `/api/schedules`.
+
+
+
 
 
 

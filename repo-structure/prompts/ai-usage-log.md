@@ -684,3 +684,25 @@ Menyesuaikan alur Sequence Diagram KRS agar mencakup validasi lengkap (prasyarat
 - **Catatan**: Log ini dibuat terpisah dari PMB untuk dokumentasi yang rapi.
 
 ---
+
+## Log 15 — Perancangan Sequence Diagram Observer Pattern & Keputusan Arsitektur Modul Jadwal & Ruangan (Minggu 7–8)
+
+### Tujuan
+Mendokumentasikan arsitektur Modul Jadwal & Ruangan pada `repo-structure/` melalui Sequence Diagram **Observer Pattern** (`sequence-schedule-observer.mmd`) serta pembaruan **ADR-001** (`3.14`–`3.17` & *trade-off* `8`–`9`) untuk deteksi bentrok 3D berbasis *Interval Tree*, notifikasi multi-stakeholder, *Hybrid AI Rescheduler*, dan invalidasi KRS ke status `REVISION`.
+
+### Perintah (Prompt)
+"Tambahkan Sequence Diagram Observer Pattern untuk Modul Jadwal & Ruangan (`repo-structure/diagrams/sequence-schedule-observer.mmd`) dan perbarui `repo-structure/docs/ADR-architecture-decisions.md` mencakup:
+1. Algoritma deteksi bentrok 3 dimensi (*room_conflict*, *lecturer_conflict*, *time_overlap*) menggunakan *Interval Tree*.
+2. Alur *Observer Pattern* (`NotificationManager` / `ScheduleSubject` -> `StudentObserver`, `LecturerObserver`, `AdminObserver`) dengan simulasi Email/SMS/Push.
+3. Rekomendasi 3 jadwal alternatif (*Hybrid AI + Rule-Based Fallback* beserta *guardrail* bebas bentrok & kapasitas).
+4. Sinkronisasi perubahan jadwal yang mengembalikan KRS terdampak ke status `REVISION` (`invalidate_by_schedule_change`) dalam satu transaksi ACID."
+
+### Hasil
+- Terbentuknya `repo-structure/diagrams/sequence-schedule-observer.mmd` berbasis Mermaid `sequenceDiagram` yang memetakan alur `Admin Akademik -> ConflictResolverUI -> SchedulingService -> IntervalTree/ConflictDetector -> Database (Jadwal & KRS) -> NotificationManager (ScheduleSubject) -> StudentObserver / LecturerObserver / AdminObserver -> NotificationLog`.
+- Pembaruan `repo-structure/docs/ADR-architecture-decisions.md` dengan sub-bab **3.14–3.17** serta poin *trade-off* **8–9**.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Seluruh alur interaksi deteksi bentrok, saran rescheduling AI, invalidasi KRS ke `REVISION`, dan mekanisme *Pub-Sub / Observer Pattern* terdokumentasi selaras dengan implementasi backend & UI.
+- **Catatan**: Pengubahan status KRS akibat perubahan jadwal diisolasi lewat `KRS.invalidate_by_schedule_change()` sehingga 28 kombinasi transisi ilegal di `test_krs_property.py` tetap utuh.
+
+---

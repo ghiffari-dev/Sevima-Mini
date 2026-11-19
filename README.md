@@ -18,10 +18,15 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 - **Modul PMB (Repository Pattern & Dependency Injection):** Pemisahan akses data (`IPMBRepository` & `SQLitePMBRepository`), registrasi calon mahasiswa, verifikasi/persetujuan kelulusan dengan pembuatan **NIM otomatis** aman *race condition*, serta agregasi statistik pendaftar (`GROUP BY`).
 - **Modul KRS & Validasi (*Chain of Responsibility*):** Struktur dua tingkat (`krs` + `krs_detail` serta `krs_log` & `notifikasi`) dengan rantai validator `DuplicateValidator -> SKSValidator -> PrerequisiteValidator -> ConflictValidator` bebas *N+1 query* (maksimal 24 SKS, nilai prasyarat $\ge$ C via bobot numerik, deteksi irisan interval jadwal).
 - **State Machine KRS, Transaksi ACID, & Penguncian Ganda:** Siklus hidup `DRAFT -> SUBMITTED -> APPROVED / REVISION` melalui tabel transisi `dict[(KRSStatus, Actor)]`, perlindungan `@validates("status")` agar status hanya berubah lewat `transition()`, unit kerja transaksi ACID (`KRSLog` + `Notifikasi` + `rollback`), serta penguncian ganda *Pessimistic Lock* (`with_for_update()`) dan *Optimistic Lock* (`version_id_col` & `diubah_pada`) untuk mencegah *race condition* dan layar basi.
-- **Global Exception Handler & Validasi Pydantic:** Penanganan error terpusat melalui `@app.exception_handler(KRSError)` (`400`, `403`, `409`, `422`) beserta skema Pydantic request/response yang tervalidasi.
+- **Global Exception Handler & Validasi Pydantic:** Penanganan error terpusat melalui `@app.exception_handler(KRSError)` (`400`, `403`, `409`, `422`) dan `@app.exception_handler(ScheduleError)` (`400`, `404`, `409`) beserta skema Pydantic request/response yang tervalidasi.
 - **Challenge Opsional (+10%) — CSP Backtracking Recommender:** Penyusunan rekomendasi jadwal KRS bebas bentrok (`/api/krs/{nim}/recommend`) dengan prioritas MK wajib > pilihan yang hasil akhirnya wajib lolos `default_validators()`.
+- **Modul Jadwal & Ruangan (Minggu 7–8):**
+  - **Scheduling Service & Interval Tree:** CRUD jadwal & master ruangan (`Ruangan` + `JadwalKuliah` + migrasi Alembic `a1b2c3sch007`), validasi kapasitas ruangan (`enrolled <= kapasitas`), serta algoritma `detect_schedule_conflict()` berbasis *Interval Tree* untuk mendeteksi `room_conflict`, `lecturer_conflict`, dan `time_overlap`.
+  - **Observer Pattern (`ScheduleSubject` & `NotificationManager`):** Penyiaran otomatis event perubahan jadwal (`SCHEDULE_CREATED`, `SCHEDULE_CHANGED`, `SCHEDULE_DELETED`, `CONFLICT_DETECTED`) ke `StudentObserver`, `LecturerObserver`, dan `AdminObserver` dengan simulasi medium **Email / SMS / Push** via log.
+  - **Conflict Resolver UI & Hybrid AI Rescheduler:** Dashboard web admin di `/dashboard/conflicts` untuk memantau bentrok, meminta 3 rekomendasi jadwal alternatif (`[{hari, jam, ruangan, reason}]`) via LLM API (jika key tersedia di `.env`) atau *rule-based fallback* dengan *guardrail* bebas bentrok, dan menerapkannya dalam satu klik.
+  - **Integrasi KRS (`REVISION`):** Perubahan/penghapusan jadwal otomatis memindahkan KRS terdampak (`SUBMITTED`/`APPROVED`) kembali ke status `REVISION` (`KRS.invalidate_by_schedule_change()`) lengkap dengan `KRSLog` dan `Notifikasi` dalam satu transaksi ACID.
 - **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations, dan skrip inisialisasi database.
-- **Automated Testing (86 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine, integrasi `KRSManager` + DB, *Property-Based Testing* (**2×1000 contoh acak** untuk batas SKS $\le$ 24 & bebas bentrok, **28 kombinasi transisi ilegal**, **200 contoh CSP**), serta API integration test via `TestClient` untuk PMB & KRS.
+- **Automated Testing (95 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine, integrasi `KRSManager` + DB, *Property-Based Testing* (**2×1000 contoh acak** untuk batas SKS $\le$ 24 & bebas bentrok, **28 kombinasi transisi ilegal**, **200 contoh CSP**, **250 contoh** ekuivalensi *Interval Tree* vs *brute-force*), pengujian *Observer Pattern*, *Hybrid AI Rescheduler*, invalidasi KRS, serta API integration test via `TestClient` untuk PMB, KRS, & Schedule.
 
 ## Ringkasan Endpoint API & Alur State Machine KRS
 
@@ -39,6 +44,14 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 | **KRS** | `POST /api/krs/{nim}/approve` | `dosen_pa_id`, `version` | `200`, `403`, `409` | Setujui KRS (satu unit kerja ACID) |
 | **KRS** | `POST /api/krs/{nim}/revise` | `dosen_pa_id`, `catatan`, `version` | `200`, `403`, `409`, `422` | Minta revisi KRS dengan catatan wajib |
 | **KRS** | `POST /api/krs/{nim}/recommend` | `wajib_codes`, `pilihan_codes`, `max_sks` | `200` | Rekomendasi jadwal CSP tervalidasi |
+| **Schedule** | `GET / POST /api/schedules/rooms` | Data ruangan (`kode_ruangan`, `kapasitas`) | `200`, `201`, `409` | Daftar & tambah master ruangan |
+| **Schedule** | `GET / POST /api/schedules` | Data jadwal (`kode_mk`, `ruangan_kode`, `dosen`, `hari`, `jam_mulai`, `jam_selesai`) | `200`, `201`, `400`, `409` | Daftar & buat jadwal (cek kapasitas & bentrok 3D) |
+| **Schedule** | `PUT / DELETE /api/schedules/{id}` | Perubahan jadwal (`hari`, `jam_mulai`, `jam_selesai`, `ruangan_kode`) | `200`, `400`, `404`, `409` | Ubah/hapus jadwal, invalidasi KRS -> `REVISION`, & notify Observer |
+| **Schedule** | `GET /api/schedules/conflicts` | — | `200` | Deteksi semua bentrok aktif via *Interval Tree* |
+| **Schedule** | `POST /api/schedules/detect` | `schedules[]` | `200` | Deteksi bentrok 3D stateless |
+| **Schedule** | `POST /api/schedules/{id}/suggest-alternatives` | — | `200`, `404` | 3 saran jadwal alternatif (Hybrid AI + guardrail) |
+| **Schedule** | `GET /api/schedules/notifications` | — | `200` | Log simulasi notifikasi Observer (Email/SMS/Push) |
+| **UI** | `GET /dashboard/conflicts` | — | `200` | Halaman **Conflict Resolver UI** untuk Admin Akademik |
 
 ### Alur Transisi Sah State Machine KRS
 
@@ -60,11 +73,12 @@ repo-structure/
 │   ├── class-diagram.mmd        # Diagram kelas UML (Mermaid)
 │   ├── usecase-diagram.puml     # Diagram use case UML (PlantUML)
 │   ├── sequence-krs.mmd         # Diagram sekuens KRS (Mermaid)
-│   └── sequence-pmb.mmd         # Diagram sekuens PMB (Mermaid)
+│   ├── sequence-pmb.mmd         # Diagram sekuens PMB (Mermaid)
+│   └── sequence-schedule-observer.mmd  # Diagram sekuens Observer Pattern & Jadwal (Mermaid)
 ├── docs/
 │   └── ADR-architecture-decisions.md  # Keputusan Arsitektur Sistem (ADR-001)
 └── prompts/
-    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML (Log 01–14)
+    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML & arsitektur (Log 01–15)
 
 backend/
 ├── alembic/                     # Migrasi database Alembic
@@ -73,24 +87,27 @@ backend/
 │   └── versions/
 │       ├── 3f3403fad0b5_tabel_pmb.py
 │       ├── 8b2104krs005_tabel_krs.py
-│       └── 9c3205krs006_krs_state_columns.py
+│       ├── 9c3205krs006_krs_state_columns.py
+│       └── a1b2c3sch007_tabel_jadwal_ruangan.py
 ├── alembic.ini                  # Konfigurasi Alembic
 ├── app/
 │   ├── core/                    # Konfigurasi, Koneksi DB, & Keamanan JWT
-│   ├── models/                  # Model SQLAlchemy 2.0 ORM (PMB, KRS, User, dll.)
+│   ├── models/                  # Model SQLAlchemy 2.0 ORM (PMB, KRS, Schedule/Ruangan, User, dll.)
 │   ├── repositories/            # Repository Pattern (IPMBRepository & SQLite)
-│   ├── routers/                 # Endpoint FastAPI (pmb.py & krs.py)
+│   ├── routers/                 # Endpoint FastAPI (pmb.py, krs.py, & schedule.py)
 │   ├── schemas/                 # Skema Validasi Pydantic
-│   ├── services/                # Business Logic (pmb_service, krs_manager, krs_validator, krs_recommender)
-│   └── main.py                  # Entry Point FastAPI & Global Exception Handler
+│   ├── services/                # Business Logic (PMB, KRS, IntervalTree, ConflictDetector, Observer, AI Rescheduler)
+│   ├── static/                  # Conflict Resolver Admin UI (conflict_resolver.html)
+│   └── main.py                  # Entry Point FastAPI, Exception Handler, & Dashboard UI
 ├── tests/
 │   ├── test_krs_api.py          # API Integration Testing KRS (TestClient)
-│   └── test_krs_property.py     # Property-Based Testing (Hypothesis) & 28 Transisi Ilegal
+│   ├── test_krs_property.py     # Property-Based Testing (Hypothesis) & 28 Transisi Ilegal
+│   └── test_schedule.py         # Unit, Property, Observer, AI Rescheduler, KRS Invalidation, & API/UI Tests (Minggu 7–8)
 ├── init_db.py                   # Skrip Inisialisasi & Seeding Database
 ├── test_models_and_schemas.py   # Unit & Integration Test Model, Validator, & State Machine KRS
 ├── test_pmb.py                  # API Integration Testing PMB (Pytest)
 ├── requirements.txt             # Daftar Dependensi Python
-└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6)
+└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6–8)
 ```
 
 ## Teknologi & Tools
@@ -116,13 +133,14 @@ backend/
    ```
 4. **Menjalankan Seluruh Test Suite (Lintas OS — Windows PowerShell & Linux/macOS):**
    ```bash
-   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py -v
+   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py -v
    ```
-5. **Menjalankan Server Backend:**
+5. **Menjalankan Server Backend (dari folder `backend/` agar terhubung ke `backend/pmb.db` hasil migrasi Alembic):**
    ```bash
-   uvicorn app.main:app --app-dir backend --reload
+   cd backend && uvicorn app.main:app --reload
    ```
    * Akses dokumentasi API interaktif (Swagger UI) di: http://127.0.0.1:8000/docs
+   * Akses **Conflict Resolver Admin UI** di: http://127.0.0.1:8000/dashboard/conflicts
 
 ## Lisensi
 

@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conflict Resolver UI — Sevima-Mini</title>
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #dc2626;
+      --danger-bg: #fef2f2;
+      --warning: #d97706;
+      --warning-bg: #fffbeb;
+      --success: #16a34a;
+      --success-bg: #f0fdf4;
+      --info: #0284c7;
+      --info-bg: #f0f9ff;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    header {
+      background: linear-gradient(135deg, #0f172a, #1e3a8a);
+      color: #fff;
+      padding: 20px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+    header p {
+      margin: 4px 0 0;
+      font-size: 0.9rem;
+      color: #cbd5e1;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .container {
+      max-width: 1240px;
+      margin: 24px auto;
+      padding: 0 20px 48px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-decoration: none;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-secondary { background: #fff; color: var(--text); border-color: var(--border); }
+    .btn-secondary:hover { background: #f8fafc; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { background: #15803d; }
+    .btn-danger { background: #fff; color: var(--danger); border-color: #fecaca; }
+    .btn-danger:hover { background: var(--danger-bg); }
+    .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+    .kpi-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+    .kpi-value {
+      font-size: 1.85rem;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .kpi-value.danger { color: var(--danger); }
+    .kpi-value.success { color: var(--success); }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 960px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      margin-bottom: 24px;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .card-title {
+      margin: 0;
+      font-size: 1.08rem;
+      font-weight: 700;
+    }
+    .card-subtitle {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: 2px 0 0;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .badge-room { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+    .badge-lecturer { background: var(--warning-bg); color: #b45309; border: 1px solid #fde68a; }
+    .badge-time { background: var(--info-bg); color: var(--info); border: 1px solid #bae6fd; }
+    .badge-ok { background: var(--success-bg); color: var(--success); border: 1px solid #bbf7d0; }
+    .badge-ai { background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; }
+
+    .conflict-item {
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--danger);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+      background: #fff;
+    }
+    .conflict-item.lecturer_conflict { border-left-color: var(--warning); }
+    .conflict-item.time_overlap { border-left-color: var(--info); }
+
+    .conflict-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    @media (max-width: 640px) {
+      .conflict-pair { grid-template-columns: 1fr; }
+    }
+
+    .mini-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.84rem;
+    }
+
+    .rec-card {
+      border: 1px solid #bfdbfe;
+      background: #f8fbff;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .rec-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .rec-slot {
+      font-weight: 700;
+      font-size: 0.96rem;
+      color: #1e3a8a;
+    }
+    .rec-reason {
+      margin: 8px 0 0;
+      font-size: 0.85rem;
+      color: #334155;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    th {
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .table-wrap { overflow-x: auto; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+    .field label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .field input, .field select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.88rem;
+      background: #fff;
+    }
+
+    .toast {
+      display: none;
+      padding: 14px 18px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      font-size: 0.9rem;
+      border: 1px solid;
+    }
+    .toast.show { display: block; }
+    .toast.success { background: var(--success-bg); color: #166534; border-color: #86efac; }
+    .toast.error { background: var(--danger-bg); color: #991b1b; border-color: #fca5a5; }
+
+    .empty-state {
+      text-align: center;
+      padding: 26px 16px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .log-feed {
+      max-height: 320px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Conflict Resolver &amp; Scheduling Dashboard</h1>
+      <p>Sevima-Mini (Minggu 7–8): Deteksi Bentrok 3D, Observer Pattern, AI Rescheduling, &amp; Sinkronisasi KRS</p>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-success" onclick="seedDemo()">Muat Data Demo Bentrok</button>
+      <button class="btn btn-secondary" onclick="loadAll()">Refresh Data</button>
+      <a class="btn btn-secondary" href="/docs" target="_blank">Swagger API Docs</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="toast" class="toast"></div>
+
+    <section class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Jadwal Aktif</div>
+        <div id="kpi-schedules" class="kpi-value">0</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Master Ruangan</div>
+        <div id="kpi-rooms" class="kpi-value">0</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Bentrok Terdeteksi</div>
+        <div id="kpi-conflicts" class="kpi-value">0</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Notifikasi Observer</div>
+        <div id="kpi-notifs" class="kpi-value">0</div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Daftar Bentrok Jadwal (Interval Tree)</h2>
+            <p class="card-subtitle">Deteksi otomatis bentrok ruangan, dosen, dan irisan waktu</p>
+          </div>
+        </div>
+        <div id="conflicts-container"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Rekomendasi Jadwal Alternatif (AI)</h2>
+            <p class="card-subtitle" id="rec-subtitle">Pilih tombol "Saran Alternatif AI" pada jadwal yang bentrok</p>
+          </div>
+          <span id="rec-source-badge" class="badge badge-ai" style="display:none;"></span>
+        </div>
+        <div id="recommendations-container">
+          <div class="empty-state">Belum ada jadwal dipilih. Klik <strong>Saran Alternatif AI</strong> pada salah satu jadwal bentrok di sebelah kiri atau di tabel jadwal.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Daftar Jadwal Kuliah (Semester 20251)</h2>
+          <p class="card-subtitle">Termasuk pengecekan kapasitas ruangan (enrolled &le; kapasitas)</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Mata Kuliah</th>
+              <th>Hari &amp; Jam</th>
+              <th>Ruangan</th>
+              <th>Dosen</th>
+              <th>Kapasitas</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="schedules-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Tambah Jadwal Kuliah</h2>
+            <p class="card-subtitle">Uji deteksi bentrok 3D atau centang "Paksa simpan" untuk simulasi bentrok</p>
+          </div>
+        </div>
+        <form onsubmit="submitCreateSchedule(event)" class="form-grid">
+          <div class="field">
+            <label for="f-mk">Mata Kuliah</label>
+            <select id="f-mk" required></select>
+          </div>
+          <div class="field">
+            <label for="f-room">Ruangan</label>
+            <select id="f-room" required></select>
+          </div>
+          <div class="field">
+            <label for="f-dosen">Dosen Pengampu</label>
+            <input id="f-dosen" type="text" placeholder="Dr. Budi Santoso" required />
+          </div>
+          <div class="field">
+            <label for="f-hari">Hari</label>
+            <select id="f-hari">
+              <option value="1">Senin</option>
+              <option value="2">Selasa</option>
+              <option value="3">Rabu</option>
+              <option value="4">Kamis</option>
+              <option value="5">Jumat</option>
+              <option value="6">Sabtu</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="f-mulai">Jam Mulai</label>
+            <input id="f-mulai" type="time" value="08:00" required />
+          </div>
+          <div class="field">
+            <label for="f-selesai">Jam Selesai</label>
+            <input id="f-selesai" type="time" value="10:00" required />
+          </div>
+          <div class="field">
+            <label for="f-enrolled">Jml Mahasiswa</label>
+            <input id="f-enrolled" type="number" min="0" value="30" required />
+          </div>
+          <div class="field">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input id="f-force" type="checkbox" style="width:auto;" /> Paksa simpan (simulasi bentrok)
+            </label>
+            <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:4px;">Simpan Jadwal</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card" style="margin-bottom:0;">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Log Notifikasi Observer Pattern</h2>
+            <p class="card-subtitle">Simulasi Email / SMS / Push untuk Mahasiswa, Dosen, &amp; Admin</p>
+          </div>
+        </div>
+        <div class="log-feed">
+          <table>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Observer</th>
+                <th>Medium</th>
+                <th>Penerima &amp; Pesan</th>
+              </tr>
+            </thead>
+            <tbody id="logs-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API = "/api/schedules";
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function showToast(message, type = "success") {
+      const el = document.getElementById("toast");
+      el.className = `toast show ${type}`;
+      el.innerHTML = message;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    async function apiFetch(url, options = {}) {
+      const resp = await fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      return data;
+    }
+
+    function conflictBadge(type) {
+      if (type === "room_conflict") return '<span class="badge badge-room">Room Conflict</span>';
+      if (type === "lecturer_conflict") return '<span class="badge badge-lecturer">Lecturer Conflict</span>';
+      return '<span class="badge badge-time">Time Overlap</span>';
+    }
+
+    function renderConflicts(conflicts) {
+      const el = document.getElementById("conflicts-container");
+      const kpi = document.getElementById("kpi-conflicts");
+      kpi.textContent = conflicts.length;
+      kpi.className = `kpi-value ${conflicts.length > 0 ? "danger" : "success"}`;
+
+      if (!conflicts.length) {
+        el.innerHTML = '<div class="empty-state"><span class="badge badge-ok">Bebas Bentrok</span><br/><br/>Semua jadwal pada semester aktif aman tanpa bentrok ruangan, dosen, maupun waktu.</div>';
+        return;
+      }
+
+      el.innerHTML = conflicts.map((c) => {
+        const [s1, s2] = c.affected_schedules;
+        return `
+          <div class="conflict-item ${escapeHtml(c.type)}">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+              ${conflictBadge(c.type)}
+              <span style="font-size:0.84rem;color:#334155;font-weight:600;">${escapeHtml(c.detail)}</span>
+            </div>
+            <div class="conflict-pair">
+              ${[s1, s2].map((s) => `
+                <div class="mini-box">
+                  <div><strong>${escapeHtml(s.nama_mk)}</strong> (${escapeHtml(s.kode_mk)})</div>
+                  <div>${escapeHtml(s.hari_nama)} ${escapeHtml(s.jam)} &bull; Ruang <strong>${escapeHtml(s.ruangan)}</strong></div>
+                  <div>Dosen: ${escapeHtml(s.dosen)} &bull; ${escapeHtml(s.enrolled_count)} mhs</div>
+                  <div style="margin-top:8px;">
+                    <button class="btn btn-primary btn-sm" onclick="suggestAlternatives(${Number(s.id)})">
+                      Saran Alternatif AI
+                    </button>
+                  </div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderSchedules(schedules) {
+      document.getElementById("kpi-schedules").textContent = schedules.length;
+      const tbody = document.getElementById("schedules-tbody");
+      if (!schedules.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;">Belum ada jadwal. Klik "Muat Data Demo Bentrok" di kanan atas atau tambahkan lewat form.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = schedules.map((s) => `
+        <tr>
+          <td>#${Number(s.id)}</td>
+          <td><strong>${escapeHtml(s.nama_mk)}</strong><br/><span style="color:#64748b;font-size:0.8rem;">${escapeHtml(s.kode_mk)}</span></td>
+          <td>${escapeHtml(s.hari_nama)}<br/><span style="color:#64748b;font-size:0.8rem;">${escapeHtml(s.jam)}</span></td>
+          <td><strong>${escapeHtml(s.ruangan_kode)}</strong><br/><span style="color:#64748b;font-size:0.8rem;">${escapeHtml(s.ruangan_nama)}</span></td>
+          <td>${escapeHtml(s.dosen)}</td>
+          <td>${Number(s.enrolled_count)} / ${Number(s.kapasitas)} mhs</td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm" onclick="suggestAlternatives(${Number(s.id)})">Saran AI</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteSchedule(${Number(s.id)})">Hapus</button>
+            </div>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function renderLogs(logs) {
+      document.getElementById("kpi-notifs").textContent = logs.length;
+      const tbody = document.getElementById("logs-tbody");
+      if (!logs.length) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#64748b;">Belum ada notifikasi tercatat.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = logs.map((l) => `
+        <tr>
+          <td><span class="badge badge-time">${escapeHtml(l.event_type)}</span></td>
+          <td><strong>${escapeHtml(l.observer)}</strong></td>
+          <td><span class="badge badge-ok">${escapeHtml(l.medium)}</span></td>
+          <td>
+            <div style="font-weight:600;font-size:0.82rem;">${escapeHtml(l.recipient)}</div>
+            <div style="color:#475569;font-size:0.8rem;">${escapeHtml(l.message)}</div>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    async function suggestAlternatives(scheduleId) {
+      const container = document.getElementById("recommendations-container");
+      const subtitle = document.getElementById("rec-subtitle");
+      const badge = document.getElementById("rec-source-badge");
+      container.innerHTML = '<div class="empty-state">Menghitung alternatif bebas bentrok...</div>';
+
+      try {
+        const data = await apiFetch(`${API}/${scheduleId}/suggest-alternatives`, { method: "POST" });
+        subtitle.textContent = `Alternatif untuk ${data.schedule.nama_mk} (${data.schedule.hari_nama} ${data.schedule.jam}, Ruang ${data.schedule.ruangan})`;
+        badge.style.display = "inline-block";
+        badge.textContent = data.source === "ai" ? "LLM AI" : (data.source === "ai_with_fallback" ? "Hybrid AI + Fallback" : "Hybrid Fallback Engine");
+
+        if (!data.recommendations.length) {
+          container.innerHTML = '<div class="empty-state">Tidak ditemukan slot kosong yang memenuhi kapasitas ruangan dan bebas bentrok dosen.</div>';
+          return;
+        }
+
+        container.innerHTML = data.recommendations.map((rec, idx) => `
+          <div class="rec-card">
+            <div class="rec-top">
+              <div class="rec-slot">#${idx + 1} &bull; ${escapeHtml(rec.hari)} ${escapeHtml(rec.jam)} &bull; Ruang ${escapeHtml(rec.ruangan)} (${Number(rec.kapasitas)} kursi)</div>
+              <button class="btn btn-success btn-sm"
+                onclick="applyAlternative(${Number(scheduleId)}, ${Number(rec.hari_num)}, '${escapeHtml(rec.jam_mulai)}', '${escapeHtml(rec.jam_selesai)}', '${escapeHtml(rec.ruangan)}')">
+                Terapkan Jadwal
+              </button>
+            </div>
+            <p class="rec-reason">${escapeHtml(rec.reason)}</p>
+          </div>
+        `).join("");
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state" style="color:#dc2626;">Gagal memuat saran: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function applyAlternative(scheduleId, hariNum, jamMulai, jamSelesai, ruangan) {
+      try {
+        const res = await apiFetch(`${API}/${scheduleId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            hari: hariNum,
+            jam_mulai: jamMulai,
+            jam_selesai: jamSelesai,
+            ruangan_kode: ruangan,
+            force: false,
+          }),
+        });
+        const nims = res.invalidated_krs_nims || [];
+        const krsMsg = nims.length
+          ? `KRS mahasiswa dipindahkan ke <strong>REVISION</strong>: ${escapeHtml(nims.join(", "))}.`
+          : "Tidak ada KRS SUBMITTED/APPROVED yang perlu direvisi.";
+        showToast(
+          `Jadwal #${scheduleId} berhasil dipindah ke <strong>${escapeHtml(res.schedule.hari_nama)} ${escapeHtml(res.schedule.jam)} (${escapeHtml(res.schedule.ruangan_kode)})</strong>. ${krsMsg} (${res.notifications_sent.length} log notifikasi Observer dikirim).`,
+          "success"
+        );
+        document.getElementById("recommendations-container").innerHTML = '<div class="empty-state">Jadwal sudah diperbarui. Klik <strong>Saran Alternatif AI</strong> jika masih ada bentrok lain.</div>';
+        await loadAll();
+      } catch (err) {
+        showToast(`Gagal menerapkan jadwal: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    async function deleteSchedule(scheduleId) {
+      try {
+        const res = await apiFetch(`${API}/${scheduleId}`, { method: "DELETE" });
+        const nims = res.invalidated_krs_nims || [];
+        const krsMsg = nims.length ? ` KRS terdampak -> REVISION: ${escapeHtml(nims.join(", "))}.` : "";
+        showToast(`${escapeHtml(res.detail)}.${krsMsg}`, "success");
+        await loadAll();
+      } catch (err) {
+        showToast(`Gagal menghapus jadwal: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    async function submitCreateSchedule(event) {
+      event.preventDefault();
+      try {
+        const payload = {
+          kode_mk: document.getElementById("f-mk").value,
+          ruangan_kode: document.getElementById("f-room").value,
+          dosen: document.getElementById("f-dosen").value,
+          hari: Number(document.getElementById("f-hari").value),
+          jam_mulai: document.getElementById("f-mulai").value,
+          jam_selesai: document.getElementById("f-selesai").value,
+          enrolled_count: Number(document.getElementById("f-enrolled").value),
+          force: document.getElementById("f-force").checked,
+        };
+        const res = await apiFetch(API, { method: "POST", body: JSON.stringify(payload) });
+        showToast(
+          `Jadwal ${escapeHtml(res.schedule.nama_mk)} (${escapeHtml(res.schedule.hari_nama)} ${escapeHtml(res.schedule.jam)}) berhasil dibuat.`,
+          "success"
+        );
+        await loadAll();
+      } catch (err) {
+        showToast(`Penjadwalan ditolak: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    async function seedDemo() {
+      try {
+        const res = await apiFetch(`${API}/seed-demo`, { method: "POST" });
+        showToast(`${escapeHtml(res.detail)} (${res.total_schedules} jadwal, ${res.total_conflicts} bentrok).`, "success");
+        await loadAll();
+      } catch (err) {
+        showToast(`Gagal memuat data demo: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    async function loadAll() {
+      const [rooms, courses, schedules, conflictsRes, logsRes] = await Promise.all([
+        apiFetch(`${API}/rooms`),
+        apiFetch(`${API}/courses`),
+        apiFetch(`${API}`),
+        apiFetch(`${API}/conflicts`),
+        apiFetch(`${API}/notifications`),
+      ]);
+
+      document.getElementById("kpi-rooms").textContent = rooms.length;
+      document.getElementById("f-room").innerHTML = rooms.map(
+        (r) => `<option value="${escapeHtml(r.kode_ruangan)}">${escapeHtml(r.kode_ruangan)} (kap ${Number(r.kapasitas)})</option>`
+      ).join("");
+      document.getElementById("f-mk").innerHTML = courses.map(
+        (c) => `<option value="${escapeHtml(c.kode_mk)}">${escapeHtml(c.kode_mk)} — ${escapeHtml(c.nama)}</option>`
+      ).join("");
+
+      renderSchedules(schedules);
+      renderConflicts(conflictsRes.conflicts || []);
+      renderLogs(logsRes.logs || []);
+    }
+
+    loadAll().catch((err) => showToast(`Gagal memuat data awal: ${escapeHtml(err.message)}`, "error"));
+  </script>
+</body>
+</html>
