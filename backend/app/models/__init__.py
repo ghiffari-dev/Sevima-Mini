@@ -4,12 +4,16 @@ from app.models.jalur_masuk import JalurMasuk
 from app.models.calon_mahasiswa import CalonMahasiswa
 from app.models.krs import (
     Actor,
+    ForbiddenError,
     KRS,
     KRSDetail,
     KRSError,
     KRSForbiddenError,
+    KRSLockedError,
+    KRSLog,
     KRSStatus,
     MataKuliah,
+    Notifikasi,
     StateTransitionError,
     TRANSITIONS,
     TransitionError,

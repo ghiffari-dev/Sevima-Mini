@@ -31,6 +31,15 @@ class TransitionError(KRSError):
         super().__init__(message, status_code=status_code)
 
 
+class KRSLockedError(TransitionError):
+    """Exception khusus ketika KRS sedang terkunci/tidak berstatus EDITABLE (409 Conflict)."""
+
+    status_code = 409
+
+    def __init__(self, message: str, status_code: int = 409) -> None:
+        super().__init__(message, status_code=status_code)
+
+
 StateTransitionError = TransitionError
 
 
@@ -39,6 +48,9 @@ class KRSForbiddenError(KRSError):
 
     def __init__(self, message: str, status_code: int = 403) -> None:
         super().__init__(message, status_code=status_code)
+
+
+ForbiddenError = KRSForbiddenError
 
 
 prerequisite = Table(
@@ -117,17 +129,34 @@ class KRS(Base):
         Enum(KRSStatus), default=KRSStatus.DRAFT, nullable=False
     )
     dosen_pa_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     approved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     catatan_revisi: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    diubah_pada: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=True,
+    )
+
+    __mapper_args__ = {"version_id_col": version}
 
     details: Mapped[list["KRSDetail"]] = relationship(
         "KRSDetail", back_populates="krs", cascade="all, delete-orphan"
     )
+    logs: Mapped[list["KRSLog"]] = relationship(
+        "KRSLog", back_populates="krs", cascade="all, delete-orphan"
+    )
 
     def __init__(self, **kwargs):
         kwargs.setdefault("status", KRSStatus.DRAFT)
+        kwargs.setdefault("version", 1)
+        kwargs.setdefault("diubah_pada", datetime.now(timezone.utc))
         self._allow_status_change = True
         try:
             super().__init__(**kwargs)
@@ -167,24 +196,32 @@ class KRS(Base):
 
         self.cek_transisi(target, actor_enum)
 
+        now = datetime.now(timezone.utc)
         if target == KRSStatus.SUBMITTED:
             if not self.details:
                 raise KRSError("KRS kosong tidak dapat di-submit")
+            self.submitted_at = now
 
         if actor_enum == Actor.DOSEN_PA:
-            if self.dosen_pa_id is None or dosen_id != self.dosen_pa_id:
+            if self.dosen_pa_id is None or (
+                dosen_id is not None and dosen_id != self.dosen_pa_id
+            ):
                 raise KRSForbiddenError(
                     "Approve/revise hanya boleh dilakukan oleh Dosen PA mahasiswa ini"
                 )
 
         if target == KRSStatus.REVISION:
-            if not catatan or not catatan.strip():
+            if catatan is not None and not catatan.strip():
                 raise KRSError("Catatan revisi wajib diisi oleh Dosen PA")
-            self.catatan_revisi = catatan.strip()
+            if catatan is not None:
+                self.catatan_revisi = catatan.strip()
+            elif not self.catatan_revisi:
+                raise KRSError("Catatan revisi wajib diisi oleh Dosen PA")
 
         if target == KRSStatus.APPROVED:
-            self.approved_at = datetime.now(timezone.utc)
+            self.approved_at = now
 
+        self.diubah_pada = now
         self._allow_status_change = True
         try:
             self.status = target
@@ -206,3 +243,40 @@ class KRSDetail(Base):
 
     krs: Mapped["KRS"] = relationship("KRS", back_populates="details")
     matakuliah: Mapped["MataKuliah"] = relationship("MataKuliah")
+
+
+class KRSLog(Base):
+    """Catatan audit perubahan status KRS (Slide 3: satu unit kerja ACID)."""
+
+    __tablename__ = "krs_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    krs_id: Mapped[int] = mapped_column(
+        ForeignKey("krs.id"), nullable=False, index=True
+    )
+    aksi: Mapped[str] = mapped_column(String(50), nullable=False)
+    oleh: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    krs: Mapped["KRS"] = relationship("KRS", back_populates="logs")
+
+
+class Notifikasi(Base):
+    """Baris notifikasi di DB yang disimpan dalam transaksi yang sama (Slide 3: ACID)."""
+
+    __tablename__ = "notifikasi"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    nim: Mapped[str] = mapped_column(
+        String(20), ForeignKey("calon_mahasiswa.nim"), nullable=False, index=True
+    )
+    pesan: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

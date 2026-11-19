@@ -529,6 +529,130 @@ def test_krs_manager_ownership_validation_and_audit_guards(caplog):
         assert any("KRS approved" in rec.message for rec in caplog.records)
 
 
+def test_krs_locked_error_acid_log_notifikasi_and_optimistic_version_lock():
+    """Menguji KRSLockedError (409), submitted_at, ACID (KRSLog + Notifikasi + rollback), serta Optimistic Lock (version & diubah_pada)."""
+    from sqlalchemy import select
+    from app.models.calon_mahasiswa import CalonMahasiswa
+    from app.models.jalur_masuk import JalurMasuk
+    from app.models.program_studi import ProgramStudi
+    from app.models.krs import (
+        KRS,
+        KRSDetail,
+        KRSError,
+        KRSLockedError,
+        KRSLog,
+        KRSStatus,
+        MataKuliah,
+        Notifikasi,
+        TransitionError,
+    )
+    from app.services.krs_manager import KRSManager
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+
+    with SessionLocal() as db:
+        prodi = ProgramStudi(kode="001", nama="Teknik Informatika", fakultas="Teknik")
+        jalur = JalurMasuk(nama="SNBP")
+        db.add_all([prodi, jalur])
+        db.flush()
+
+        mhs = CalonMahasiswa(
+            nama_lengkap="Dewi Lestari",
+            email="dewi@example.com",
+            phone="081234567892",
+            tanggal_lahir=date(2005, 7, 20),
+            program_studi_id=prodi.id,
+            jalur_masuk_id=jalur.id,
+            status="approved",
+            nim="2025001-0003",
+        )
+        mk1 = MataKuliah(
+            kode_mk="IF101",
+            nama="Algoritma",
+            sks=3,
+            hari=1,
+            jam_mulai=time(8, 0),
+            jam_selesai=time(10, 0),
+        )
+        mk2 = MataKuliah(
+            kode_mk="IF102",
+            nama="Matematika Diskrit",
+            sks=3,
+            hari=2,
+            jam_mulai=time(8, 0),
+            jam_selesai=time(10, 0),
+        )
+        db.add_all([mhs, mk1, mk2])
+        db.commit()
+
+        mgr = KRSManager(db, semester="20251", dosen_pa_id=10)
+
+        # 1. Tambah course pertama -> KRS dibuat (version awal = 1), tambah course kedua -> diubah_pada disentuh, version naik
+        mgr.add_course("2025001-0003", "IF101")
+        krs = db.scalars(select(KRS).where(KRS.nim == "2025001-0003")).first()
+        v_awal = krs.version
+        assert v_awal >= 1
+
+        mgr.add_course("2025001-0003", "IF102")
+        db.refresh(krs)
+        assert krs.version > v_awal
+        assert krs.diubah_pada is not None
+
+        # 2. Submit KRS -> submitted_at terisi dan status SUBMITTED
+        krs = mgr.submit_krs("2025001-0003")
+        assert krs.status == KRSStatus.SUBMITTED
+        assert krs.submitted_at is not None
+
+        # 3. Saat SUBMITTED, add_course / remove_course melempar KRSLockedError (409)
+        with pytest.raises(KRSLockedError, match="KRS SUBMITTED tidak bisa diubah") as exc_lock:
+            mgr.add_course("2025001-0003", "IF101")
+        assert exc_lock.value.status_code == 409
+
+        with pytest.raises(KRSLockedError, match="KRS SUBMITTED tidak bisa diubah") as exc_lock_rem:
+            mgr.remove_course("2025001-0003", "IF101")
+        assert exc_lock_rem.value.status_code == 409
+
+        # 4. Layar basi (Optimistic Lock): Dosen PA mengirim version lama (misal version = 1) -> ditolak 409
+        with pytest.raises(TransitionError, match="KRS sudah berubah, muat ulang") as exc_stale:
+            mgr.approve_krs("2025001-0003", dosen_pa_id=10, version=1)
+        assert exc_stale.value.status_code == 409
+
+        # Pastikan rollback bekerja: status masih SUBMITTED dan belum ada KRSLog / Notifikasi
+        db.refresh(krs)
+        assert krs.status == KRSStatus.SUBMITTED
+        assert db.scalars(select(KRSLog).where(KRSLog.krs_id == krs.id)).all() == []
+        assert db.scalars(select(Notifikasi).where(Notifikasi.nim == "2025001-0003")).all() == []
+
+        # 5. Revise dengan version terbaru berhasil menyimpan KRSLog("revise") dan Notifikasi
+        v_submitted = krs.version
+        krs = mgr.revise_krs(
+            "2025001-0003",
+            dosen_pa_id=10,
+            catatan="Kurangi 1 MK pilihan",
+            version=v_submitted,
+        )
+        assert krs.status == KRSStatus.REVISION
+        logs = db.scalars(select(KRSLog).where(KRSLog.krs_id == krs.id)).all()
+        notifs = db.scalars(select(Notifikasi).where(Notifikasi.nim == "2025001-0003")).all()
+        assert len(logs) == 1 and logs[0].aksi == "revise" and logs[0].oleh == 10
+        assert len(notifs) == 1 and "Kurangi 1 MK pilihan" in notifs[0].pesan
+
+        # 6. Mahasiswa hapus IF102 saat REVISION (version naik), submit ulang, lalu Dosen PA approve (ACID)
+        mgr.remove_course("2025001-0003", "IF102")
+        krs = mgr.submit_krs("2025001-0003")
+        krs = mgr.approve_krs("2025001-0003", dosen_pa_id=10, version=krs.version)
+        assert krs.status == KRSStatus.APPROVED
+        assert krs.approved_at is not None
+
+        logs_after = db.scalars(select(KRSLog).where(KRSLog.krs_id == krs.id)).all()
+        notifs_after = db.scalars(select(Notifikasi).where(Notifikasi.nim == "2025001-0003")).all()
+        assert [l.aksi for l in logs_after] == ["revise", "approve"]
+        assert any(n.pesan == "KRS Anda disetujui" for n in notifs_after)
+
+
+
 
 
 

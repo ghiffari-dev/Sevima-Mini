@@ -234,6 +234,34 @@ Analisis 4 slide materi Minggu 06 dan selaraskan kekurangan berikut pada modul K
 - **Kekurangan / Kompleksitas Tambahan**: Penambahan kolom `approved_at` dan `catatan_revisi` pada tabel `krs` memerlukan sinkronisasi migrasi Alembic pada database yang sudah ada.
 
 
+## Log 10 — Penyempurnaan ADR (Tabel Sendiri vs Library), `KRSLockedError`, Unit Kerja ACID (`KRSLog` + `Notifikasi`), dan Optimistic Lock (`version` & `diubah_pada`)
+
+### Tujuan
+Menyempurnakan modul KRS dan dokumentasi arsitektur agar 100% selaras dengan keempat slide lanjutan Minggu 06:
+1. Mencatat keputusan arsitektur pemilihan tabel transisi state machine sendiri (`dict[(state, aktor)]`) vs library eksternal (`python-statemachine` / `transitions`) di dokumen ADR.
+2. Menambahkan `KRSLockedError` (`409 Conflict`), kolom `submitted_at`, serta penggabungan seluruh pesan kegagalan validasi (`"; ".join(...)`) pada `submit_krs`.
+3. Menerapkan transaksi ACID satu unit kerja (`try ... commit() / except ... rollback()`) pada `approve_krs` dan `revise_krs` yang menyimpan baris `KRSLog` dan `Notifikasi` ke database.
+4. Menerapkan kombinasi *Pessimistic Lock* (`with_for_update()`) dan *Optimistic Lock* (`version_id_col = version` + pembaruan `diubah_pada` saat `add_course` / `remove_course`) untuk menolak layar basi dengan error `409 Conflict` (`"KRS sudah berubah, muat ulang"`).
+
+### Perintah (Prompt)
+"Sempurnakan implementasi State Machine dan transaksi pada modul KRS dengan ketentuan berikut:
+1. Catat keputusan arsitektur di dokumen ADR mengenai alasan memilih tabel transisi `dict[(state, aktor)]` buatan sendiri dibandingkan library eksternal (`python-statemachine` / `transitions`) dari sisi dependensi, skala 4 state, dan kemudahan penjelasan saat viva.
+2. Pada `KRSManager`, tambahkan `KRSLockedError` (status 409) sebagai penjaga di `add_course` dan `remove_course` ketika status KRS bukan `EDITABLE`, catat `submitted_at` saat `submit_krs`, dan gabungkan semua pesan kegagalan validasi (`'; '.join(...)`) sebelum berpindah state.
+3. Jadikan `approve_krs` dan `revise_krs` sebagai satu unit kerja transaksi ACID (`try ... commit() / except ... rollback()`) yang menyimpan riwayat `KRSLog` dan baris `Notifikasi` ke database dalam transaksi yang sama.
+4. Cegah race condition dan layar basi ketika dosen menyetujui saat mahasiswa masih mengedit dengan mengombinasikan Pessimistic Lock (`with_for_update()`) dan Optimistic Lock (`version` dengan `version_id_col` pada `KRS`, serta sentuh `diubah_pada` saat `add_course`/`remove_course` agar nomor versi selalu naik dan tolak versi lama dengan error 409 'KRS sudah berubah, muat ulang')."
+
+### Hasil (Hasil Implementasi)
+- Pembaruan `repo-structure/docs/ADR-architecture-decisions.md` dengan penambahan sub-bab **3.12 (State Machine KRS: Tabel Transisi Sendiri vs Library Eksternal)**, sub-bab **3.13 (Unit Kerja Transaksi ACID & Strategi Penguncian Ganda)**, serta analisis trade-off ke-7.
+- Pembaruan `backend/app/models/krs.py` dan `backend/app/models/__init__.py`: penambahan `KRSLockedError` (409), alias `ForbiddenError`, kolom `submitted_at`, `version` (`version_id_col`), dan `diubah_pada` pada model `KRS`, serta model `KRSLog` dan `Notifikasi`.
+- Pembaruan `backend/app/services/krs_manager.py`: penggunaan `KRSLockedError` pada `add_course`/`remove_course`, pembaruan `krs.diubah_pada` agar `version` naik saat detail berubah, penggabungan pesan gagal di `submit_krs`, blok transaksi ACID (`try/except rollback`) beserta penyimpanan `KRSLog` & `Notifikasi` pada `approve_krs` dan `revise_krs`, serta pengecekan versi layar basi (`409`).
+- Pembaruan migrasi Alembic `backend/alembic/versions/9c3205krs006_krs_state_columns.py` dan penambahan unit test `test_krs_locked_error_acid_log_notifikasi_and_optimistic_version_lock` di `backend/test_models_and_schemas.py`.
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Sistem KRS kini tahan terhadap *race condition* maupun kondisi layar basi berkat kombinasi *Pessimistic Lock* (`FOR UPDATE`) dan *Optimistic Lock* (`version`), menjamin atomisitas data audit (`KRSLog`) dan `Notifikasi` melalui prinsip ACID, serta memiliki justifikasi arsitektur yang lengkap di ADR untuk persiapan viva.
+- **Kekurangan / Kompleksitas Tambahan**: Penambahan tabel `krs_log` dan `notifikasi` serta kolom `version` menuntut pengelolaan transaksi (`commit` / `rollback`) yang konsisten di seluruh method `KRSManager`.
+
+
+
 
 
 

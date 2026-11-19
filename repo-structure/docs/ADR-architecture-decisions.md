@@ -58,6 +58,27 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
   3. `PrerequisiteValidator` dijalankan setelah lolos validasi dasar karena membutuhkan *query* ke database untuk memeriksa riwayat kelulusan mata kuliah prasyarat pada semester sebelumnya dengan perbandingan bobot numerik ($\ge \text{C}$ atau bobot $\ge 2.0$, bukan perbandingan string ASCII).
   4. `ConflictValidator` dijalankan terakhir untuk menguji irisan interval waktu ($\text{mulai}_A < \text{selesai}_B \land \text{mulai}_B < \text{selesai}_A$ pada hari yang sama) terhadap mata kuliah yang sudah valid di dalam kartu.
 
+### 3.12 State Machine KRS: Tabel Transisi Sendiri (`dict[(state, aktor)]`) vs Library Eksternal
+- **Pilihan Arsitektur**: Menggunakan **tabel transisi buatan sendiri** (`TRANSITIONS: dict[tuple[KRSStatus, Actor], set[KRSStatus]]`) beserta method satu pintu `KRS.transition()` dan `@validates("status")`, dibandingkan menggunakan library pihak ketiga seperti `python-statemachine` atau `transitions`.
+- **Alasan Pemilihan**:
+  1. **Tanpa Dependensi Tambahan**: Tidak menambah paket eksternal (`+0` paket) sehingga proyek tetap ringan dan bebas risiko ketidakcocokan versi ORM SQLAlchemy 2.0.
+  2. **Proporsional untuk 4 State (`DRAFT`, `SUBMITTED`, `REVISION`, `APPROVED`)**: Untuk siklus hidup KRS yang terdiri dari 4 state dan 4 panah transisi berbasis peran (`Actor.MAHASISWA` dan `Actor.DOSEN_PA`), tabel `dict[(state, aktor)]` sudah sangat **cukup** dan ekspresif, sedangkan library state machine eksternal bersifat berlebihan (*overkill*).
+  3. **Kemudahan Penjelasan Saat Viva / Evaluasi**: Seluruh mekanisme *guard* (pengecekan KRS kosong, validasi kepemilikan `dosen_pa_id`, kewajiban `catatan_revisi`, serta pemisahan HTTP `403 Forbidden` vs `409 Conflict`) tertulis secara eksplisit dan transparan tanpa tersembunyi di balik *magic/metaclass* internal library.
+
+| Aspek Perbandingan | Tabel Sendiri (`dict[(state, aktor)]`) | Library (`python-statemachine` / `transitions`) |
+| :--- | :--- | :--- |
+| **Dependensi** | Tidak ada | +1 paket eksternal |
+| **Skala 4 State KRS** | **Cukup** dan ringkas | Berlebihan (*over-engineering*) |
+| **State Banyak + Callback Kompleks** | Mulai repot | **Layak** dipertimbangkan |
+| **Dijelaskan Saat Viva** | **Mudah** dan transparan | Harus memahami internal library |
+
+### 3.13 Unit Kerja Transaksi ACID & Strategi Penguncian Ganda (Pessimistic + Optimistic Lock) pada KRS
+- **Periksa Semuanya Baru Pindah State (`submit_krs`)**: Pengajuan KRS menjalankan penguncian baris (`FOR UPDATE`), pengecekan transisi (`cek_transisi`), pengecekan KRS tidak kosong, dan validasi menyeluruh semua mata kuliah (`validate_krs`) **sebelum** memanggil `krs.transition(KRSStatus.SUBMITTED)`. Modifikasi mata kuliah (`add_course` / `remove_course`) saat status bukan `DRAFT`/`REVISION` ditolak dengan `KRSLockedError` (`409 Conflict`).
+- **Satu Unit Kerja ACID (`approve_krs` & `revise_krs`)**: Persetujuan maupun permintaan revisi oleh Dosen PA mengeksekusi perubahan status KRS, pencatatan waktu (`approved_at`), penambahan baris audit `KRSLog`, dan penyimpanan baris `Notifikasi` di dalam satu blok transaksi `try ... db.commit() / except ... db.rollback()` agar memenuhi sifat *Atomicity, Consistency, Isolation, Durability* (semua berhasil atau batal semua).
+- **Pessimistic Lock + Optimistic Lock (Pencegahan *Race Condition* & Layar Basi)**:
+  1. *Pessimistic Lock*: Seluruh operasi pada `KRSManager` (`add_course`, `remove_course`, `submit_krs`, `approve_krs`, `revise_krs`) mengambil baris kartu lewat `_krs_terkunci()` yang menggunakan `.with_for_update()` dan memeriksa status setelah kunci diperoleh.
+  2. *Optimistic Lock*: Model `KRS` dilengkapi kolom `version` (`__mapper_args__ = {"version_id_col": version}`) dan `diubah_pada`. Setiap penambahan/penghapusan `krs_detail` menyentuh `krs.diubah_pada` agar `version` pada baris `krs` selalu naik, sehingga persetujuan dari layar Dosen PA yang "basi" (versi lama) otomatis ditolak dengan `409 Conflict` (*"KRS sudah berubah, muat ulang"*).
+
 ## 4. Trade-off yang Dipertimbangkan
 1. **Inheritance & Polymorphism vs Flat Database Models**
    - *Kelebihan*: Menerapkan *Open/Closed Principle* dan *Liskov Substitution Principle* secara ketat pada domain OOP.
@@ -77,4 +98,7 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 6. **Chain of Responsibility Pattern & Pemisahan `KRSManager` pada Modul KRS**
    - *Kelebihan*: Mematuhi *Open/Closed Principle* (OCP) dan *Single Responsibility Principle* (SRP) karena `KRSManager` hanya mengatur alur transaksi tanpa mengetahui detail angka batas SKS atau rumus jadwal, sementara setiap `Validator` fokus pada satu aturan bisnis yang dapat diuji dan disusun ulang secara independen (`Duplicate -> SKS -> Prerequisite -> Conflict`).
    - *Kekurangan*: Menambah jumlah class objek (`Validator`, `KRSContext`, `ValidationResult`) dibandingkan menulis percabangan `if-else` monolitik di dalam satu fungsi.
+7. **Tabel Transisi State Machine Sendiri vs Library State Machine Eksternal**
+   - *Kelebihan*: Tanpa dependensi tambahan, terintegrasi langsung dengan validator ORM SQLAlchemy (`@validates("status")`), sangat mudah diuji dan dijelaskan saat viva untuk domain 4 state KRS.
+   - *Kekurangan*: Fitur otomatisasi seperti pembuatan diagram visual otomatis atau *hook on_enter/on_exit* deklaratif harus ditulis secara eksplisit di dalam method `transition()` dan `KRSManager`.
 
