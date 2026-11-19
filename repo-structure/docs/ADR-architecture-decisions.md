@@ -4,7 +4,7 @@
 Disetujui
 
 ## 2. Konteks
-Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan implementasi backend RESTful API (FastAPI & SQLAlchemy) yang mencakup manajemen pengguna, katalog mata kuliah, penawaran kelas per semester, KRS, jadwal, nilai, serta pembayaran. Desain dikembangkan secara iteratif melalui analisis arsitektur berorientasi objek (OOP) dan prinsip SOLID.
+Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan implementasi backend RESTful API (FastAPI & SQLAlchemy) yang mencakup manajemen pengguna, katalog mata kuliah, penawaran kelas per semester, KRS, modul penjadwalan kuliah & ruangan (deteksi bentrok 3 dimensi berbasis *Interval Tree*, notifikasi berbasis *Observer Pattern*, saran penjadwalan ulang *AI-Powered* beserta *Conflict Resolver UI*, serta sinkronisasi invalidasi KRS), pencatatan nilai, serta pembayaran. Desain dikembangkan secara iteratif melalui analisis arsitektur berorientasi objek (OOP) dan prinsip SOLID.
 
 ## 3. Keputusan Arsitektur
 
@@ -81,15 +81,29 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 
 ### 3.14 Modul Jadwal & Ruangan: Interval Tree & Deteksi Bentrok 3 Dimensi
 - **Pemodelan Terhubung (`ruangan` + `jadwal_kuliah`)**: Menambahkan model `Ruangan` dan `JadwalKuliah` pada `backend/app/models/schedule.py` yang berelasi langsung ke `matakuliah.kode_mk` (tanpa membongkar model legacy `Schedule` di `course.py`), sehingga setiap perubahan jadwal langsung mengetahui daftar KRS mahasiswa yang mengambil mata kuliah terkait serta memvalidasi batasan kapasitas ruangan (`enrolled_count <= kapasitas`).
-- **Interval Tree untuk Irisan Waktu**: Pengecekan tumpang tindih jam menggunakan struktur data *Augmented Binary Search Tree* (`IntervalTree` dengan atribut `max_end` dan interval half-open `[start, end)`) per hari sehingga jadwal bersebelahan (`08:00-10:00` vs `10:00-12:00`) tidak dianggap bentrok, serta mengklasifikasikan konflik menjadi `room_conflict` (ruangan sama), `lecturer_conflict` (dosen sama), dan `time_overlap` (mahasiswa/MK sama atau irisan umum).
+- **Interval Tree untuk Irisan Waktu**: Pengecekan tumpang tindih jam menggunakan struktur data *Augmented Binary Search Tree* (`IntervalTree` di `backend/app/services/interval_tree.py` dengan atribut `max_end` dan interval half-open `[start, end)`) per hari sehingga jadwal bersebelahan (`08:00-10:00` vs `10:00-12:00`) tidak dianggap bentrok, serta mengklasifikasikan konflik di `detect_schedule_conflict()` menjadi `room_conflict` (ruangan sama), `lecturer_conflict` (dosen sama), dan `time_overlap` (mahasiswa/MK sama atau irisan umum).
+
+| Aspek Perbandingan | Interval Tree (`[start, end)`) | Brute-Force Pairwise $O(n^2)$ |
+| :--- | :--- | :--- |
+| **Kompleksitas Query Irisan** | $O(\log n + k)$ per jadwal (rata-rata), $O(n \log n + m)$ seluruh pasangan | $O(n^2)$ membandingkan seluruh pasangan meski rentang jam berjauhan |
+| **Interval Bersebelahan** | Eksplisit non-bentrok (`entry.start < end and start < entry.end`) | Harus menjaga syarat ketat yang sama secara manual |
+| **Skala Data Jadwal** | Tetap responsif saat jumlah kelas per hari bertambah besar | Mulai melambat kuadratik pada katalog semester besar |
+| **Verifikasi Ekuivalensi** | Terbukti identik dengan *brute-force* pada **250 contoh acak Hypothesis** (`test_schedule.py`) | Dijadikan *oracle* pembanding di property-based testing |
 
 ### 3.15 Observer Pattern (`ScheduleSubject` & `NotificationManager`)
-- **Publisher–Subscriber Terpisah**: `ScheduleSubject` dan turunannya `NotificationManager` mengelola daftar subscriber secara dinamis lewat `attach()`, `detach()`, dan `notify(event_type, schedule_data)`.
-- **Multi-Stakeholder & Simulasi Medium**: Disediakan tiga observer konkret — `StudentObserver` (simulasi Email & Push), `LecturerObserver` (simulasi Email & SMS), serta `AdminObserver` (simulasi Email, SMS, & Push) — yang menuliskan log ke logger `schedule.notifications` dan menyimpan riwayat ringkas di memori untuk ditampilkan di Conflict Resolver UI.
+- **Publisher–Subscriber Terpisah**: `ScheduleSubject` dan turunannya `NotificationManager` (`backend/app/services/schedule_observer.py`) mengelola daftar subscriber secara dinamis lewat `attach()`, `detach()`, dan `notify(event_type, schedule_data)` untuk empat tipe event (`SCHEDULE_CREATED`, `SCHEDULE_CHANGED`, `SCHEDULE_DELETED`, `CONFLICT_DETECTED`). Alur interaksi lengkap didokumentasikan pada `repo-structure/diagrams/sequence-schedule-observer.mmd`.
+- **Multi-Stakeholder & Simulasi Medium**:
 
-### 3.16 Hybrid AI-Powered Rescheduler dengan Guardrail Deterministik
-- **Mode Hybrid (`AI + Rule-Based Fallback`)**: `suggest_alternative_schedules` dapat memanggil Gemini/OpenAI API via `httpx` ketika `GEMINI_API_KEY` atau `OPENAI_API_KEY` tersedia di `.env`, dan otomatis beralih ke mesin skor CSP/aturan lokal ketika API key tidak diisi, kuota habis, atau saat pengujian offline.
-- **Guardrail Anti-Halusinasi**: Setiap rekomendasi JSON dari LLM (`{hari, jam, ruangan, reason}`) wajib lolos verifikasi ulang deterministik terhadap kapasitas ruangan (`kapasitas >= enrolled`), bebas bentrok ruangan, dan bebas bentrok dosen sebelum dikirim ke Admin UI.
+| Subscriber (Observer) | Target Penerima | Medium Simulasi | Tujuan Notifikasi |
+| :--- | :--- | :--- | :--- |
+| `StudentObserver` | Seluruh NIM terdampak (`affected_nims`) | `EMAIL`, `PUSH` | Menginformasikan perubahan/penghapusan jadwal dan pengajuan ulang KRS |
+| `LecturerObserver` | Dosen pengampu baru & lama (`dosen`, `old_dosen`) | `EMAIL`, `SMS` | Memberitahu perubahan hari, jam, atau ruangan mengajar |
+| `AdminObserver` | `admin.akademik@sevima.ac.id` | `EMAIL`, `SMS`, `PUSH` | Audit perubahan jadwal, jumlah KRS direvisi, dan bentrok terdeteksi |
+
+### 3.16 Hybrid AI-Powered Rescheduler & Conflict Resolver UI
+- **Tiga Constraint Penjadwalan Ulang & Kontrak JSON**: `suggest_alternative_schedules()` (`backend/app/services/schedule_recommender.py`) menghasilkan hingga **3 alternatif jadwal** dengan format `[{hari, jam, ruangan, reason}]` yang wajib memenuhi: (1) `kapasitas >= enrolled`, (2) nol bentrok ruangan maupun jadwal dosen pengampu, serta (3) disrupsi minimal bagi mahasiswa (memprioritaskan slot pagi `07:00–12:00` dan siang `12:00–15:00` serta menghindari jadwal bentrok KRS mahasiswa terkait).
+- **Mode Hybrid (`AI + Rule-Based Fallback`) & Konfigurasi `.env`**: Jika `GEMINI_API_KEY` atau `OPENAI_API_KEY` (beserta `AI_MODEL` opsional) tersedia di `.env`, backend memanggil LLM API via `httpx`; bila key kosong, offline, atau gagal, sistem otomatis beralih ke mesin skor deterministik lokal. Setiap output JSON dari LLM tetap melewati *guardrail* deterministik untuk menolak slot halusinasi yang melanggar kapasitas atau bentrok.
+- **Embedded Conflict Resolver UI (`/dashboard/conflicts`)**: Antarmuka admin disajikan langsung oleh FastAPI (`FileResponse` ke `backend/app/static/conflict_resolver.html`) menggunakan HTML5, CSS3, dan Vanilla JavaScript tanpa pipeline Node.js/React/Vite terpisah, sehingga ringan, nol langkah build tambahan, dan langsung terhubung ke endpoint `/api/schedules/*` serta `/api/schedules/seed-demo`.
 
 ### 3.17 Sinkronisasi Jadwal ke KRS (`invalidate_by_schedule_change -> REVISION`)
 - **Pemeliharaan Invarian State Machine KRS**: Alih-alih menambah status/aktor baru yang melanggar ruang kombinasi state machine KRS (`4 status x 2 aktor`), perubahan atau penghapusan jadwal pada `SchedulingService` memanggil method khusus `KRS.invalidate_by_schedule_change(reason)` dalam satu transaksi ACID.
@@ -123,4 +137,10 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 9. **Invalidasi KRS ke Status `REVISION` vs Status Terpisah `INVALIDATED`**
    - *Kelebihan*: Mahasiswa dapat langsung memperbarui dan mengajukan ulang KRS melalui alur `KRSManager` (`REVISION -> SUBMITTED`) tanpa memperbesar tabel transisi state machine maupun merusak pengujian 28 transisi ilegal.
    - *Kekurangan*: Pembedaan antara revisi oleh Dosen PA dan revisi akibat perubahan jadwal bergantung pada `catatan_revisi` serta riwayat `KRSLog` (`invalidate_schedule_change`).
+10. **Interval Tree vs Brute-Force Pairwise $O(n^2)$ untuk Deteksi Bentrok Jadwal**
+    - *Kelebihan*: Pruning `max_end` pada *Interval Tree* membuat pencarian irisan jam per hari lebih efisien untuk katalog jadwal besar dengan semantik half-open `[start, end)` yang eksplisit.
+    - *Kekurangan*: Membutuhkan implementasi struktur tree tersendiri (`IntervalTree` & `IntervalNode`) dibanding dua loop bersarang sederhana.
+11. **Embedded Admin Dashboard HTML/JS vs SPA Frontend Terpisah (React/Vite)**
+    - *Kelebihan*: Nol dependensi frontend tambahan, langsung aktif saat `uvicorn` dijalankan di `/dashboard/conflicts`, dan mudah diuji end-to-end langsung lewat FastAPI `TestClient`.
+    - *Kekurangan*: Tidak memiliki manajemen state atau komponen modular skala besar seperti React/Vue apabila UI berkembang menjadi portal multi-halaman kompleks.
 
