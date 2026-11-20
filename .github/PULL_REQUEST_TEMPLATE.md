@@ -1,16 +1,36 @@
 ## Deskripsi Fitur
-<!-- Jelaskan fitur atau perubahan yang diimplementasikan pada PR ini -->
+Implementasi terintegrasi **Sistem Informasi Akademik (SIAKAD / SEVIMA-Mini)** dari Minggu 3 hingga Minggu 12, dengan fokus pembaruan terakhir pada **Minggu 12 — Modul Presensi Digital (QR Code) & Early Warning System**:
+- **Minggu 3–4 (Fondasi Model & Modul PMB)**: Skema SQLAlchemy 2.0 + migrasi Alembic, pendaftaran calon mahasiswa baru, verifikasi dokumen, seleksi kelulusan, dan *generator* NIM otomatis (`YYYY + kode_prodi + nomor_urut`) yang *thread-safe*.
+- **Minggu 5–6 (Modul KRS: Chain of Responsibility, State Machine, & CSP Recommender)**: Rantai validator KRS (`SKSValidator`, `PrerequisiteValidator`, `ConflictValidator`, `DuplicateValidator`), *State Machine* satu pintu `KRS.transition()` (`DRAFT`, `SUBMITTED`, `APPROVED`, `REVISION`) dengan kombinasi *Pessimistic Lock* (`FOR UPDATE`) & *Optimistic Lock* (`version`), rekomendasi jadwal bebas bentrok berbasis *CSP Backtracking*, serta pengujian properti `Hypothesis`.
+- **Minggu 7–8 (Modul Jadwal & Ruangan: Sort & Sweep, Transactional Outbox Observer, AI Rescheduler, & iCalendar)**: Pemodelan `Ruangan`, `Dosen`, `Kelas`, dan `Jadwal`, deteksi bentrok *Grouping + Sort & Sweep* (dibandingkan dengan *Naive oracle* via `Hypothesis`), *Observer Pattern* berbasis *Transactional Outbox* (`OutboxDispatcher` pasca-`commit()`), *Hybrid AI Rescheduler* dengan 4 lapis saringan deterministik, ekspor `.ics` (RFC 5545), dan invalidasi KRS terdampak lewat `Actor.SYSTEM`.
+- **Minggu 9 (Modul Nilai & Transkrip Bagian 1: Skala Berbasis Data, `Decimal` GPA Calculator, & Audit Trail)**: `krs_detail.nilai` berelasi ke `skala_nilai.huruf` (`NUMERIC(3,2)` + flag `lulus`), perhitungan IPS & IPK presisi `Decimal` (`ROUND_HALF_UP`) berpola *Functional Core, Imperative Shell* + pembanding SQL CTE `ROW_NUMBER()`, penjaga input nilai (`is_pengampu`, `FOR UPDATE`, `PresensiPort` $\ge 75\%$), serta *audit trail* `grade_history` & SQL View `riwayat_nilai`.
+- **Minggu 11 (Modul Keuangan SPP: State Machine Tagihan, Webhook HMAC-SHA256, & AI Financial Insights)**: Skema `payment_method`, `billing`, dan `payment` (`NUMERIC(14,2)`), *state machine* tagihan (`unpaid`, `partial`, `paid`, `overdue`), pembayaran cicilan kumulatif, denda keterlambatan terkonfigurasi (`LateFeeConfig`), webhook pembayaran berverifikasi `HMAC-SHA256` & idempotensi `transaction_id`, blokir pengajuan KRS lintas semester (`DatabaseBillingGuardPort`), penjadwal `APScheduler`, serta *AI Financial Insights* dengan *guardrail* angka deterministik.
+- **Minggu 12 (Modul Presensi QR Code, Geofencing Haversine, Integrasi `DatabasePresensiPort`, & Ekspor Excel)**:
+  - Pembuatan sesi presensi (`AttendanceSession`) dengan rotasi token QR otomatis berbasis window waktu (`120` detik) dan tanda tangan `HMAC-SHA256` (`nonce` sesi).
+  - Validasi scan QR 6 lapis (`AttendanceService.scan_qr`): *sliding-window rate limiter* (`5` request/menit/NIM), validasi sesi & token QR, cek peserta `KRSStatus.APPROVED`, idempotensi scan ganda (`409 Conflict`), *geofencing* jarak *Haversine* ($\le 100\text{ m}$) + batas akurasi GPS ($\le 150\text{ m}$), serta klasifikasi otomatis `present` ($\le 15\text{ menit}$) vs `late` ($15 < \Delta t \le 30\text{ menit}$).
+  - Penyelesaian *Dependency Inversion* Minggu 9 $\rightarrow$ Minggu 12 melalui `DatabasePresensiPort` pada `GradeService` untuk memblokir input nilai mahasiswa dengan kehadiran $< 75\%$.
+  - Rekap kehadiran kelas & mahasiswa (*Early Warning* $< 75\%$), ekspor laporan Excel `.xlsx` 3 sheet (`openpyxl`), *AI Attendance Pattern Analyzer* dengan *guardrail* deterministik, dan UI `/dashboard/attendance`.
 
 ## Isu Terkait
-<!-- Cantumkan nomor/link issue, misal: Closes #... -->
+- Milestone Kumulatif Tugas Kuliah OOP Minggu 3–12 (Branch: `tugas-12`)
+- Dokumentasi Klarifikasi Stakeholder: [`stakeholder-questions-minggu-9.md`](repo-structure/docs/stakeholder-questions-minggu-9.md), [`stakeholder-questions-minggu-11.md`](repo-structure/docs/stakeholder-questions-minggu-11.md), dan [`stakeholder-questions-minggu-12.md`](repo-structure/docs/stakeholder-questions-minggu-12.md)
 
 ## Apa yang Dibantu AI
-<!-- Jelaskan bagian kode/test/dokumentasi apa saja yang dibantu AI dan apa yang direvisi secara manual -->
+- **Dibantu AI**:
+  - *Scaffolding* awal model SQLAlchemy, skema Pydantic, struktur router FastAPI, dan halaman dashboard HTML mandiri (`/dashboard/conflicts`, `/dashboard/grades`, `/dashboard/finance`, `/dashboard/attendance`).
+  - Kerangka algoritma deteksi bentrok jadwal (*Sort & Sweep*), rumus geometri bola *Haversine*, pembangkit file `.ics` (RFC 5545) & `.xlsx` (`openpyxl`), serta *boilerplate* pengujian `pytest` dan *property-based testing* `Hypothesis`.
+- **Direvisi & Diverifikasi Manual ("Jangan Percaya, Periksa")**:
+  - **Koreksi Bug Klasik AI pada Jadwal & KRS**: Mengganti perbandingan jam bertipe `str` menjadi `datetime.time`, memperbaiki operator batas interval setengah terbuka `[jam_mulai, jam_selesai)` agar kuliah bersambung tidak dianggap bentrok, menambahkan *Optimistic Lock* (`version`) & *Pessimistic Lock* (`with_for_update()`), serta mengisolasi pengiriman notifikasi ke *Transactional Outbox* pasca-`commit()`.
+  - **Koreksi Bug Klasik AI pada Nilai & Keuangan**: Mengganti `float` dan *banker's rounding* `round()` dengan `Decimal` + `ROUND_HALF_UP`, membandingkan nilai ulang berdasarkan bobot `Decimal` (bukan ASCII huruf `'E' > 'A'`), memperbaiki bug pseudo-code cicilan kumulatif (`total_paid >= total_due`), dan memvalidasi tanda tangan webhook memakai `hmac.compare_digest`.
+  - **Koreksi Bug Klasik AI pada Presensi (Minggu 12)**: Menyelesaikan kontradiksi durasi QR `15` menit vs batas terlambat `30` menit dengan memisahkan `session_duration_minutes=30` dan rotasi QR otomatis `120` detik berbasis `HMAC-SHA256`, mengikat identitas mahasiswa pada JWT (`get_current_mahasiswa`) untuk mencegah titip absen, mengganti `datetime.utcnow()` yang usang dengan `datetime.now(timezone.utc)`, serta memasang *guardrail* deterministik pada seluruh keluaran LLM.
 
 ## 3 Prompt Kunci
-1. <!-- Prompt kunci 1 -->
-2. <!-- Prompt kunci 2 -->
-3. <!-- Prompt kunci 3 -->
+1. **Prompt Modul Jadwal, Observer Outbox, & KRS (Minggu 5–8)**:
+   > *"Implementasikan rantai validator KRS (Chain of Responsibility) dan State Machine satu pintu `KRS.transition()` dengan tabel `(status, Actor)` yang diuji penuh menggunakan Hypothesis, lalu integrasikan dengan Modul Jadwal & Ruangan (`Ruangan`, `Dosen`, `Kelas`, `Jadwal`) menggunakan algoritma Grouping + Sort & Sweep (interval setengah terbuka `[jam_mulai, jam_selesai)`), Transactional Outbox (`OutboxDispatcher` pasca-commit dengan isolasi `try/except` per observer dan idempotency key), serta AI Rescheduler dengan 4 lapis saringan deterministik."*
+2. **Prompt Modul Nilai `Decimal` & Modul Keuangan SPP (Minggu 9 & 11)**:
+   > *"Analisis terlebih dahulu seluruh ambiguitas spesifikasi Modul Nilai (Minggu 9) dan Modul Keuangan SPP (Minggu 11) ke dokumen stakeholder sebelum menulis kode. Implementasikan perhitungan IPS/IPK dengan fungsi murni berbasis `Decimal` (`ROUND_HALF_UP`) dan status kelulusan dari kolom data `skala_nilai.lulus`, audit trail `grade_history` atomik, serta layanan Billing & Payment (`NUMERIC(14,2)`) dengan cicilan kumulatif, webhook HMAC-SHA256 idempoten, dan pemblokiran submit KRS via `BillingGuardPort`."*
+3. **Prompt Modul Presensi QR Code & Integrasi `DatabasePresensiPort` (Minggu 12)**:
+   > *"Implementasikan Modul Presensi QR Code (Minggu 12) pada `backend/app/services/attendance_service.py` yang mengatasi kontradiksi waktu QR 15 menit vs batas terlambat 30 menit melalui pemisahan durasi sesi (30 menit) dan rotasi token QR otomatis setiap 120 detik berbasis HMAC-SHA256 (`qr_nonce`), dilengkapi 6 lapis validasi `scan_qr` (sliding-window rate limiter 5x/menit/NIM, geofencing Haversine <= 100m + akurasi GPS <= 150m, cek KRS APPROVED, idempotensi 409, dan klasifikasi present <= 15m vs late <= 30m), serta hubungkan `DatabasePresensiPort` ke `GradeService`."*
 
 ## Risiko & Limitasi
 - **Integrasi `DatabasePresensiPort` & Fallback `StubPresensiPort` (Minggu 9 -> Minggu 12)**: `GradeService` kini membaca persentase kehadiran nyata dari tabel `attendance_session` dan `attendance_record` melalui `DatabasePresensiPort`, dengan fallback ke `StubPresensiPort` apabila suatu kelas belum memiliki sesi presensi di database (agar skenario uji terisolasi Minggu 9 tetap berjalan deterministik).
