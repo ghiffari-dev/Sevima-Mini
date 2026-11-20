@@ -403,10 +403,6 @@ Menyelaraskan seluruh implementasi Modul Jadwal & Ruangan di branch `tugas-8` te
 - **Kelebihan:** Arsitektur kini tahan terhadap *crash* setelah komit (*Transactional Outbox*), kegagalan parsial observer (*try/except* per subscriber), duplikasi retry (*idempotency key*), serta halusinasi AI (4 saringan deterministik dengan calon ID `-1`), sekaligus konsisten menjaga satu pintu `KRS.transition()`.
 - **Kekurangan / Kompleksitas Tambahan:** Penambahan RBAC mewajibkan klien/UI dashboard melakukan login ke `/api/auth/login` terlebih dahulu sebelum mengakses endpoint `/api/schedules/*` (kecuali `/api/schedules/export.ics` yang terbuka untuk mahasiswa).
 
-### Ringkasan Jawaban Viva (Tanpa AI)
-1. **Mengapa notifikasi wajib dikirim setelah `commit()` (lewat Outbox)?** Karena jika dikirim sebelum `commit()` lalu transaksi rollback, mahasiswa dan dosen menerima kabar palsu tentang jadwal yang tidak pernah berubah; sebaliknya, jika server kanal error sebelum `commit()`, perubahan jadwal yang sah ikut batal. Dengan *Transactional Outbox*, perubahan jadwal, invalidasi KRS, dan janji event disimpan atomik dalam satu transaksi DB, lalu dikirim belakangan oleh `OutboxDispatcher`.
-2. **Mengapa saran AI harus divalidasi ulang oleh kode kita?** Karena LLM bersifat probabilistik: ia dapat membalas teks non-JSON, melanggar skema jam/hari, mengarang nama ruangan yang tidak ada di DB, memilih ruangan berkapasitas kurang, atau menyarankan slot yang bentrok dengan jadwal dosen/kelas lain. Karena itu slot kosong dihitung kode sendiri dan setiap saran AI disaring 4 lapis (parsing, skema Pydantic, eksistensi & kapasitas ruangan, serta `detect_conflicts_sweep` dengan calon `id=-1`).
-
 
 ## Log 15 — Modul Nilai & Transkrip Bagian 1 (Minggu 9): Skala Nilai Berbasis Data, `GradeService` (`PresensiPort` & `FOR UPDATE`), `Decimal` Pure GPA Calculator, Audit Trail `grade_history`, & Kontradiksi Spesifikasi
 
@@ -456,11 +452,6 @@ Mengimplementasikan seluruh cakupan **Minggu ke-9 (Materi 5: Modul Nilai & Trans
 - **Kelebihan:** Desain *Functional Core, Imperative Shell* memisahkan kalkulasi `Decimal` murni dari ORM sehingga ribuan kasus diuji cepat tanpa mock; definisi kelulusan di `skala_nilai.lulus` dan `PresensiPort` membuat sistem siap terhadap keputusan stakeholder maupun integrasi Minggu 12 tanpa menyentuh kode inti; dan IPK *compute-on-read* bebas risiko cache basi.
 - **Kekurangan / Kompleksitas Tambahan:** Diperlukan penyesuaian fixture test lama agar mengisi `skala_nilai` sebelum menyimpan `KRSDetail.nilai`, serta keberadaan model `Grade` legacy tetap dipertahankan sementara di `models/grade.py` hingga modul lama dibersihkan sepenuhnya.
 
-### Ringkasan Jawaban Viva (Tanpa AI)
-1. **Mengapa `Decimal` + `ROUND_HALF_UP` wajib dipakai dan dibulatkan sekali di akhir?** Karena `float` berbasis biner tidak dapat merepresentasikan pecahan desimal seperti `0.1` secara tepat, dan `round()` Python memakai *banker's rounding* (`round(3.125, 2) == 3.12`) yang merugikan mahasiswa pada batas predikat kelulusan. Dengan `Decimal` dari string dan `quantize(Decimal("0.01"), ROUND_HALF_UP)` sekali di akhir (`total_mutu / total_sks`), `3.125` menjadi `3.13` tanpa akumulasi galat pembulatan per semester.
-2. **Mengapa tidak langsung memutus batas lulus `D` atau `C` secara diam-diam di kode?** Karena kontradiksi *"nilai >= D (2.0)"* adalah keputusan kebijakan akademik (stakeholder), bukan kewenangan teknis AI atau programmer untuk ditebak diam-diam—apalagi dampaknya mengubah IPK Rina dari `3.08` menjadi `2.67`. Menaruh aturan di `skala_nilai.lulus` menjadikan perubahan kebijakan cukup 1 baris data.
-3. **Mengapa memilih *compute-on-read* untuk IPK dan transaksi `GradeService` untuk `grade_history`?** *Compute-on-read* menjamin IPK selalu akurat tanpa risiko cache basi untuk ~60 baris nilai per mahasiswa; sedangkan pencatatan audit di `GradeService` dalam satu transaksi DB menangkap `diubah_oleh` dan `alasan` secara portabel di SQLite maupun MySQL/PostgreSQL tanpa duplikasi dengan trigger.
-
 
 ## Log 16 — Modul Keuangan / SPP (Minggu 11): Payment Schema `e5f6g7fin011`, `BillingService`, Webhook HMAC-SHA256, Blokir KRS, APScheduler, Dashboard, & AI Financial Insights
 
@@ -501,11 +492,6 @@ Mengimplementasikan seluruh cakupan **Minggu 11: Modul Keuangan (SPP)** pada bra
 - **Kelebihan:** Seluruh kalkulasi uang dan laporan memakai `Decimal` + fungsi murni deterministik, webhook tahan *retry* dan pemalsuan signature, blokir KRS teruji end-to-end terbuka otomatis setelah pelunasan webhook, dan seluruh ambiguitas terdokumentasi resmi untuk stakeholder.
 - **Kekurangan / Kompleksitas Tambahan:** Mempertahankan tabel legacy `payments` bersama tabel baru `payment` sampai modul PMB/KRS awal disatukan sepenuhnya pada iterasi akhir.
 
-### Ringkasan Jawaban Viva (Tanpa AI)
-1. **Mengapa `determine_billing_status` harus mengevaluasi `amount_paid + amount`, bukan `amount` tunggal?** Karena pembayaran cicilan mengubah status secara kumulatif. Jika tagihan Rp 5 juta dibayar Rp 2 juta lalu Rp 3 juta, membandingkan pembayaran ke-2 (`3 juta < 5 juta`) akan salah mempertahankan status `partial` padahal total terbayar sudah `5 juta` (`paid`).
-2. **Bagaimana webhook gateway diamankan dari pemalsuan dan pengiriman ulang (*retry*)?** Pertama, payload mentah diverifikasi dengan `HMAC-SHA256` menggunakan `hmac.compare_digest` (`401` bila gagal). Kedua, kolom `payment.transaction_id` diberi constraint `UNIQUE` dan dicek di awal `process_payment()` sehingga retry dengan `transaction_id` sama langsung mengembalikan `200 OK` (`idempotent_replay=True`) tanpa menambah `amount_paid`.
-3. **Mengapa perhitungan angka pada AI Financial Insights tidak diserahkan ke LLM?** Karena LLM bersifat probabilistik dan rawan halusinasi aritmatika maupun melanggar privasi bila NIM mentah dikirim ke API luar. Backend menghitung revenue, *collection rate*, top 10 tunggakan, dan jumlah mahasiswa telat `>2` bulan (`Z`) secara deterministik di Python/`Decimal`, lalu LLM hanya menyusun ringkasan dari metrik agregat teranonimasi.
-
 ---
 
 ## Log 17 — Modul Presensi QR Code (Minggu 12): Rotasi QR Otomatis (`HMAC-SHA256`), Geofencing Haversine, Rate Limiter, Ekspor Excel, Integrasi `DatabasePresensiPort`, & AI Attendance Analyzer
@@ -544,21 +530,5 @@ Mengimplementasikan **Minggu 12: Modul Presensi (QR Code)** secara menyeluruh de
 ### Evaluasi (Objektif)
 - **Kelebihan:** Menyelesaikan seluruh 5 deliverables Minggu 12 sekaligus menutup *Dependency Inversion* `PresensiPort` dari Minggu 9 secara mulus tanpa merusak satu pun dari 180 test lama; mengombinasikan rotasi QR otomatis + geofencing *Haversine* + *rate limiting* + proteksi spoofing NIM.
 - **Kekurangan / Kompleksitas Tambahan:** Membutuhkan refresh berkala pada tampilan QR dosen setiap `120` detik (sudah diotomatisasi dengan timer *countdown* pada `/dashboard/attendance`).
-
-### Ringkasan Jawaban Viva (Tanpa AI)
-1. **Bagaimana sistem mengatasi kontradiksi antara "QR valid 15 menit" dan "Terlambat jika scan setelah 15 menit (max 30 menit)"?** Dengan memisahkan durasi sesi perkuliahan (`closes_at = opened_at + 30 menit`) dari masa hidup tiap jendela QR yang berotasi otomatis setiap `120` detik (`window_index` + `qr_nonce` HMAC-SHA256). QR yang diproyeksikan selalu berganti dan hangus setelah melewati `grace_windows`, namun mahasiswa yang tiba di menit ke-16 s.d. ke-30 tetap bisa memindai QR jendela aktif dan tercatat sebagai `terlambat`.
-2. **Bagaimana sistem mencegah mahasiswa memotret QR untuk teman di kos (*titip absen*) atau mengulang token lama (*replay attack*)?** Melalui tiga lapis pertahanan: (1) setiap sesi memiliki `secret` acak dan klaim `jti = HMAC-SHA256(secret, "sid:win")` yang berganti otomatis tiap 120 detik, (2) validasi lokasi GPS menggunakan rumus *Haversine* terhadap titik koordinat ruang kuliah (`radius <= 100m`, `accuracy <= 150m`), dan (3) `UniqueConstraint("session_id", "nim")` serta pencocokan klaim `nim` dari JWT mahasiswa yang sedang login.
-3. **Bagaimana Modul Presensi Minggu 12 terhubung dengan Modul Nilai Minggu 9?** `DatabasePresensiPort` mengimplementasikan protokol `PresensiPort` (`persentase(nim, kelas_id) -> Decimal`) dan disuntikkan lewat `get_presensi_port` di `routers/grade.py`. Tanpa mengubah kode `GradeService`, input nilai oleh dosen otomatis membaca persentase kehadiran nyata dari `attendance_session` dan `attendance_record` serta menolak input nilai (`422 PresensiKurangError`) bila kehadiran mahasiswa `< 75%`.
-
-
-
-
-
-
-
-
-
-
-
 
 
