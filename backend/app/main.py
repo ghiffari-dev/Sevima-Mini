@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
+from app.models.grade import GradeError
 from app.models.krs import KRSError
 from app.models.schedule import ScheduleError
 
@@ -28,6 +29,11 @@ async def schedule_error(request: Request, exc: ScheduleError):
     return JSONResponse(status_code=exc.status_code, content=exc.body())
 
 
+@app.exception_handler(GradeError)
+async def grade_error(request: Request, exc: GradeError):
+    return JSONResponse(status_code=exc.status_code, content=exc.body())
+
+
 DB_PATH = "backend/pmb.db"
 
 def get_db():
@@ -38,14 +44,16 @@ def get_db():
     finally:
         conn.close()
 
-from app.routers import auth, krs, pmb, schedule
+from app.routers import auth, grade, krs, pmb, schedule
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(pmb.router, prefix="/api/pmb", tags=["PMB"])
 app.include_router(krs.router, prefix="/api/krs", tags=["KRS"])
 app.include_router(schedule.router, prefix="/api/schedules", tags=["Schedules"])
+app.include_router(grade.router, prefix="/api", tags=["Grades"])
 
 
 _CONFLICT_UI_PATH = Path(__file__).resolve().parent / "static" / "conflict_resolver.html"
+_GRADE_UI_PATH = Path(__file__).resolve().parent / "static" / "grade_input.html"
 
 
 @app.get("/dashboard/conflicts", include_in_schema=False)
@@ -54,4 +62,7 @@ def conflict_resolver_dashboard():
     return FileResponse(_CONFLICT_UI_PATH)
 
 
-
+@app.get("/dashboard/grades", include_in_schema=False)
+def grade_input_dashboard():
+    """Menyajikan form web input nilai & audit trail untuk dosen pengampu."""
+    return FileResponse(_GRADE_UI_PATH)

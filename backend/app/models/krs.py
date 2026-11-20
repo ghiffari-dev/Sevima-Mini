@@ -16,6 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, reconstructor, relationship, v
 from app.models.base import Base
 
 if TYPE_CHECKING:
+    from app.models.grade import GradeHistory, SkalaNilai
     from app.models.schedule import Kelas
 
 
@@ -301,11 +302,19 @@ class KRSDetail(Base):
     kelas_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("kelas.id"), nullable=True, index=True
     )
-    nilai: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    nilai: Mapped[str | None] = mapped_column(
+        String(2), ForeignKey("skala_nilai.huruf"), nullable=True
+    )
 
     krs: Mapped["KRS"] = relationship("KRS", back_populates="details")
     matakuliah: Mapped["MataKuliah"] = relationship("MataKuliah")
     kelas: Mapped["Kelas | None"] = relationship("app.models.schedule.Kelas")
+    skala: Mapped["SkalaNilai | None"] = relationship("app.models.grade.SkalaNilai")
+    histories: Mapped[list["GradeHistory"]] = relationship(
+        "app.models.grade.GradeHistory",
+        back_populates="krs_detail",
+        order_by="GradeHistory.id",
+    )
 
 
 class KRSLog(Base):

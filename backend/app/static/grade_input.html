@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Input Nilai & Transkrip — Sevima-Mini</title>
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #dc2626;
+      --danger-bg: #fef2f2;
+      --warning: #d97706;
+      --warning-bg: #fffbeb;
+      --success: #16a34a;
+      --success-bg: #f0fdf4;
+      --info: #0284c7;
+      --info-bg: #f0f9ff;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    header {
+      background: linear-gradient(135deg, #0f172a, #1e3a8a);
+      color: #fff;
+      padding: 20px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    header h1 { margin: 0; font-size: 1.35rem; font-weight: 700; }
+    header p { margin: 4px 0 0; font-size: 0.9rem; color: #cbd5e1; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .auth-bar {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 12px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid #334155;
+      font-size: 0.85rem;
+    }
+    .auth-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .auth-form input {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #1e293b;
+      color: #fff;
+      font-size: 0.84rem;
+    }
+
+    .container { max-width: 1240px; margin: 24px auto; padding: 0 20px 48px; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-decoration: none;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-secondary { background: #fff; color: var(--text); border-color: var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: #f8fafc; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover:not(:disabled) { background: #15803d; }
+    .btn-sm { padding: 6px 11px; font-size: 0.8rem; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      margin-bottom: 24px;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .card-title { margin: 0; font-size: 1.08rem; font-weight: 700; }
+    .card-subtitle { font-size: 0.85rem; color: var(--muted); margin: 2px 0 0; }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+    .kpi-label { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; font-weight: 600; }
+    .kpi-value { font-size: 1.75rem; font-weight: 700; margin-top: 4px; color: var(--primary); }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .badge-ok { background: var(--success-bg); color: var(--success); border: 1px solid #bbf7d0; }
+    .badge-danger { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+    .badge-warn { background: var(--warning-bg); color: #b45309; border: 1px solid #fde68a; }
+    .badge-info { background: var(--info-bg); color: var(--info); border: 1px solid #bae6fd; }
+
+    .toast {
+      display: none;
+      padding: 13px 16px;
+      border-radius: 10px;
+      margin-bottom: 18px;
+      font-size: 0.9rem;
+      border: 1px solid;
+    }
+    .toast.show { display: block; }
+    .toast.success { background: var(--success-bg); color: #166534; border-color: #86efac; }
+    .toast.error { background: var(--danger-bg); color: #991b1b; border-color: #fca5a5; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    th { background: #f8fafc; color: var(--muted); font-size: 0.77rem; text-transform: uppercase; }
+    tr.row-disabled { background: #fef2f2; opacity: 0.85; }
+
+    select, input[type="text"] {
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.86rem;
+      background: #fff;
+    }
+    input.reason-required { border-color: var(--warning); background: #fffbeb; }
+
+    .notice {
+      background: var(--info-bg);
+      border: 1px solid #bae6fd;
+      color: #075985;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 0.85rem;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Form Input Nilai Dosen Pengampu & Audit Trail</h1>
+      <p>Modul Nilai & Transkrip Minggu 9 — Sevima-Mini (Decimal ROUND_HALF_UP, PresensiPort Stub, & Compute-on-Read)</p>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-secondary" onclick="seedDemo()">Muat Data Demo (Rina 90% &amp; Budi 70%)</button>
+      <a class="btn btn-secondary" href="/dashboard/conflicts">Conflict Resolver UI</a>
+      <a class="btn btn-secondary" href="/docs" target="_blank">Swagger API</a>
+    </div>
+  </header>
+
+  <div class="auth-bar">
+    <div id="auth-status">Status Sesi: <span class="badge badge-danger">Belum Login</span></div>
+    <form class="auth-form" onsubmit="event.preventDefault(); loginDosen();">
+      <input id="auth-email" type="email" value="dosen.pengampu@sevima.ac.id" placeholder="Email Dosen" />
+      <input id="auth-password" type="password" value="dosen123" placeholder="Password" />
+      <button class="btn btn-primary btn-sm" type="submit">Login Dosen Pengampu</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="logoutDosen()">Keluar</button>
+    </form>
+  </div>
+
+  <div class="container">
+    <div id="toast" class="toast"></div>
+
+    <div class="notice">
+      <strong>Catatan Aturan Kelulusan &amp; Risiko Stub:</strong>
+      Skala nilai saat ini menggunakan asumsi sementara <strong>minimal C lulus</strong> (<code>A=4.00, B=3.00, C=2.00</code> lulus; <code>D=1.00, E=0.00</code> tidak lulus) menunggu konfirmasi stakeholder atas kontradiksi dokumen tugas (<code>&gt;= D (2.0)</code>). Pemeriksaan presensi (minimal 75%) memakai <code>StubPresensiPort</code> hingga Modul Presensi selesai di Minggu 12. Penjaga sebenarnya tetap ditegakkan di <code>GradeService</code>.
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">1. Pilih Kelas yang Diampu &amp; Input Nilai Mahasiswa</h2>
+          <p class="card-subtitle">Hanya dosen pengampu pada tabel <code>jadwal</code> yang dapat mengakses dan menyimpan nilai. Alasan wajib diisi saat mengubah nilai yang sudah ada.</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label for="kelas-select" style="font-size:0.84rem;font-weight:600;color:var(--muted);">Kelas:</label>
+          <select id="kelas-select" onchange="loadPesertaKelas()"></select>
+          <button class="btn btn-secondary btn-sm" onclick="loadKelasPengampu()">Muat Ulang</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>NIM</th>
+              <th>Nama Mahasiswa</th>
+              <th>Presensi</th>
+              <th>Nilai Tersimpan</th>
+              <th>Pilih Huruf</th>
+              <th>Alasan Perubahan</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="peserta-tbody">
+            <tr><td colspan="7" style="text-align:center;color:var(--muted);">Klik "Muat Data Demo" lalu "Login Dosen Pengampu" untuk menampilkan peserta kelas.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">2. Pemantauan IPS, IPK (Compute-on-Read), &amp; Audit Trail (<code>riwayat_nilai</code>)</h2>
+          <p class="card-subtitle">IPK dihitung langsung dari data terbaru tanpa cache basi dan dikirim sebagai string 2 desimal.</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input id="inspect-nim" type="text" value="2025001-0101" placeholder="NIM Mahasiswa" />
+          <input id="inspect-sem" type="text" value="20242" placeholder="Semester (mis. 20242)" style="width:120px;" />
+          <button class="btn btn-primary btn-sm" onclick="loadStudentSummary()">Lihat IPK &amp; Riwayat</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">IPK Kumulatif (String 2 Desimal)</div>
+          <div id="kpi-ipk" class="kpi-value">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">IPS Semester Dipilih</div>
+          <div id="kpi-ips" class="kpi-value">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Jumlah Entri Audit Trail</div>
+          <div id="kpi-audit" class="kpi-value">0</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Semester</th>
+              <th>Mata Kuliah</th>
+              <th>Nilai Lama &rarr; Baru</th>
+              <th>Diubah Oleh</th>
+              <th>Waktu (UTC)</th>
+              <th>Alasan</th>
+            </tr>
+          </thead>
+          <tbody id="riwayat-tbody">
+            <tr><td colspan="7" style="text-align:center;color:var(--muted);">Belum ada riwayat nilai dimuat.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "sevima_dosen_jwt";
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function showToast(msg, kind = "success") {
+      const el = document.getElementById("toast");
+      el.className = `toast show ${kind}`;
+      el.innerHTML = msg;
+    }
+
+    function getToken() {
+      return sessionStorage.getItem(TOKEN_KEY) || "";
+    }
+
+    function updateAuthBadge() {
+      const el = document.getElementById("auth-status");
+      if (getToken()) {
+        el.innerHTML = 'Status Sesi: <span class="badge badge-ok">Dosen Terautentikasi (JWT)</span>';
+      } else {
+        el.innerHTML = 'Status Sesi: <span class="badge badge-danger">Belum Login</span>';
+      }
+    }
+
+    async function apiFetch(url, options = {}) {
+      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      const token = getToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const resp = await fetch(url, { ...options, headers });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        const err = new Error(data.detail || `HTTP ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+      }
+      return data;
+    }
+
+    async function seedDemo() {
+      try {
+        const res = await apiFetch("/api/grades/seed-demo", { method: "POST" });
+        showToast(escapeHtml(res.detail), "success");
+        await loadStudentSummary();
+        if (getToken()) {
+          await loadKelasPengampu();
+        }
+      } catch (err) {
+        showToast(`Gagal memuat data demo: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    async function loginDosen() {
+      const email = document.getElementById("auth-email").value.trim();
+      const password = document.getElementById("auth-password").value;
+      try {
+        const data = await apiFetch("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
+        sessionStorage.setItem(TOKEN_KEY, data.access_token);
+        updateAuthBadge();
+        showToast("Login Dosen Pengampu berhasil.", "success");
+        await loadKelasPengampu();
+        await loadStudentSummary();
+      } catch (err) {
+        showToast(`Login gagal: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    function logoutDosen() {
+      sessionStorage.removeItem(TOKEN_KEY);
+      updateAuthBadge();
+      document.getElementById("kelas-select").innerHTML = "";
+      document.getElementById("peserta-tbody").innerHTML =
+        '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Silakan login sebagai Dosen Pengampu.</td></tr>';
+      showToast("Sesi Dosen telah keluar.", "success");
+    }
+
+    async function loadKelasPengampu() {
+      if (!getToken()) return;
+      try {
+        const classes = await apiFetch("/api/kelas/pengampu");
+        const sel = document.getElementById("kelas-select");
+        if (!classes.length) {
+          sel.innerHTML = '<option value="">(Tidak ada kelas yang diampu)</option>';
+          document.getElementById("peserta-tbody").innerHTML =
+            '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Belum ada kelas yang diampu. Klik "Muat Data Demo".</td></tr>';
+          return;
+        }
+        sel.innerHTML = classes.map((c) => `
+          <option value="${Number(c.kelas_id)}">
+            ${escapeHtml(c.semester)} &bull; ${escapeHtml(c.kode_mk)} - ${escapeHtml(c.nama_mk)} (Kelas ${escapeHtml(c.nama_kelas)}, ${Number(c.jumlah_peserta)} mhs)
+          </option>
+        `).join("");
+        const idxLast = classes.length - 1;
+        if (idxLast >= 0) sel.selectedIndex = 0;
+        await loadPesertaKelas();
+      } catch (err) {
+        showToast(`Gagal memuat kelas pengampu: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    function onHurufChange(nim, nilaiLama) {
+      const selectEl = document.getElementById(`huruf-${nim}`);
+      const alasanEl = document.getElementById(`alasan-${nim}`);
+      if (!selectEl || !alasanEl) return;
+      const perluAlasan = Boolean(nilaiLama) && selectEl.value !== nilaiLama;
+      alasanEl.className = perluAlasan ? "reason-required" : "";
+      alasanEl.placeholder = perluAlasan ? "WAJIB diisi saat mengubah nilai!" : "Opsional untuk input pertama";
+    }
+
+    async function loadPesertaKelas() {
+      const kelasId = document.getElementById("kelas-select").value;
+      if (!kelasId) return;
+      try {
+        const data = await apiFetch(`/api/kelas/${kelasId}/peserta`);
+        const tbody = document.getElementById("peserta-tbody");
+        if (!data.peserta.length) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Belum ada peserta terdaftar di kelas ini.</td></tr>';
+          return;
+        }
+        const hurufOps = ["A", "B", "C", "D", "E"];
+        tbody.innerHTML = data.peserta.map((p) => {
+          const disabledAttr = p.bisa_diinput ? "" : "disabled";
+          const rowClass = p.bisa_diinput ? "" : "row-disabled";
+          const presBadge = p.bisa_diinput
+            ? `<span class="badge badge-ok">${escapeHtml(p.presensi_persen)}%</span>`
+            : `<span class="badge badge-danger">${escapeHtml(p.presensi_persen)}% (&lt; 75%)</span>`;
+          const nilaiSaved = p.nilai
+            ? `<span class="badge badge-info">${escapeHtml(p.nilai)}</span>`
+            : '<span style="color:var(--muted);">Belum diisi</span>';
+          const options = hurufOps.map((h) => {
+            const selected = p.nilai === h ? "selected" : "";
+            return `<option value="${h}" ${selected}>${h}</option>`;
+          }).join("");
+          const blockNote = p.alasan_blokir
+            ? `<div style="font-size:0.76rem;color:var(--danger);margin-top:4px;">${escapeHtml(p.alasan_blokir)}</div>`
+            : "";
+          const placeholder = p.nilai ? "Wajib jika nilai diubah" : "Opsional (input pertama)";
+          return `
+            <tr class="${rowClass}">
+              <td><code>${escapeHtml(p.nim)}</code></td>
+              <td><strong>${escapeHtml(p.nama)}</strong>${blockNote}</td>
+              <td>${presBadge}</td>
+              <td>${nilaiSaved}</td>
+              <td>
+                <select id="huruf-${escapeHtml(p.nim)}" ${disabledAttr} onchange="onHurufChange('${escapeHtml(p.nim)}', '${escapeHtml(p.nilai || "")}')">
+                  ${options}
+                </select>
+              </td>
+              <td>
+                <input id="alasan-${escapeHtml(p.nim)}" type="text" placeholder="${placeholder}" ${disabledAttr} />
+              </td>
+              <td>
+                <button class="btn btn-success btn-sm" ${disabledAttr} onclick="submitNilai(${Number(data.kelas_id)}, '${escapeHtml(p.nim)}')">
+                  Simpan
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join("");
+      } catch (err) {
+        showToast(`Gagal memuat peserta kelas: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    async function submitNilai(kelasId, nim) {
+      const huruf = document.getElementById(`huruf-${nim}`).value;
+      const alasan = document.getElementById(`alasan-${nim}`).value;
+      try {
+        const res = await apiFetch(`/api/kelas/${kelasId}/nilai/${encodeURIComponent(nim)}`, {
+          method: "PUT",
+          body: JSON.stringify({ huruf, alasan: alasan || null }),
+        });
+        showToast(`${escapeHtml(res.detail)}. IPK terbaru: <strong>${escapeHtml(res.ipk)}</strong>`, "success");
+        document.getElementById("inspect-nim").value = nim;
+        document.getElementById("inspect-sem").value = res.semester;
+        await loadPesertaKelas();
+        await loadStudentSummary();
+      } catch (err) {
+        showToast(`Penolakan server: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    async function loadStudentSummary() {
+      const nim = document.getElementById("inspect-nim").value.trim();
+      const sem = document.getElementById("inspect-sem").value.trim() || "20242";
+      if (!nim) return;
+      try {
+        const [ipkRes, ipsRes, histRes] = await Promise.all([
+          apiFetch(`/api/mahasiswa/${encodeURIComponent(nim)}/ipk`),
+          apiFetch(`/api/mahasiswa/${encodeURIComponent(nim)}/ips/${encodeURIComponent(sem)}`),
+          apiFetch(`/api/mahasiswa/${encodeURIComponent(nim)}/riwayat-nilai`),
+        ]);
+        document.getElementById("kpi-ipk").textContent = ipkRes.ipk;
+        document.getElementById("kpi-ips").textContent = ipsRes.ips;
+        document.getElementById("kpi-audit").textContent = histRes.length;
+
+        const tbody = document.getElementById("riwayat-tbody");
+        if (!histRes.length) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Belum ada riwayat nilai untuk NIM ini.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = histRes.map((h) => `
+          <tr>
+            <td>#${Number(h.id)}</td>
+            <td>${escapeHtml(h.semester)}</td>
+            <td><strong>${escapeHtml(h.nama_mk)}</strong> (${escapeHtml(h.kode_mk)})</td>
+            <td><code>${escapeHtml(h.nilai_lama ?? "NULL")}</code> &rarr; <strong>${escapeHtml(h.nilai_baru)}</strong></td>
+            <td>${escapeHtml(h.nama_dosen)}</td>
+            <td style="font-size:0.8rem;color:var(--muted);">${escapeHtml(h.diubah_pada)}</td>
+            <td>${escapeHtml(h.alasan || "-")}</td>
+          </tr>
+        `).join("");
+      } catch (err) {
+        showToast(`Gagal memuat ringkasan mahasiswa: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    updateAuthBadge();
+    if (getToken()) {
+      loadKelasPengampu();
+    }
+  </script>
+</body>
+</html>

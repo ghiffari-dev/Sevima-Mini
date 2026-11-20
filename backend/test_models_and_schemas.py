@@ -249,6 +249,7 @@ def _attach_schedule(db, mk, hari: int, mulai: time, selesai: time, room_kode: s
 def test_krs_manager_and_matakuliah_self_referential_flow():
     """Menguji MataKuliah (sd.prasyarat == [algoritma]), KRS, KRSDetail, dan KRSManager sesuai 8 slide dosen."""
     from app.models.calon_mahasiswa import CalonMahasiswa
+    from app.models.grade import seed_skala_nilai
     from app.models.jalur_masuk import JalurMasuk
     from app.models.program_studi import ProgramStudi
     from app.models.krs import KRS, KRSDetail, KRSStatus, MataKuliah
@@ -259,6 +260,7 @@ def test_krs_manager_and_matakuliah_self_referential_flow():
     SessionLocal = sessionmaker(bind=engine)
 
     with SessionLocal() as db:
+        seed_skala_nilai(db)
         prodi = ProgramStudi(kode="001", nama="Teknik Informatika", fakultas="Teknik")
         jalur = JalurMasuk(nama="SNBP")
         db.add_all([prodi, jalur])

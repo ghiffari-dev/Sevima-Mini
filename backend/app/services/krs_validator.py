@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.course import Course, Kelas, Schedule
 from app.models.enrollment import Enrollment
+from app.models.grade import SkalaNilai
 from app.models.krs import KRS, KRSDetail, KRSStatus, MataKuliah, prerequisite
 from app.models.pendaftaran import PendaftaranKRS
 
@@ -140,24 +141,40 @@ def prasyarat_belum_lulus(
     prereq_codes = [p.kode_mk for p in prereq_list]
 
     # Ambil seluruh riwayat KRSDetail mahasiswa pada semester sebelumnya (< semester saat ini)
-    # yang kartu KRS-nya sudah APPROVED dalam satu kali query (bebas N+1)
-    stmt_passed = (
-        select(KRSDetail.kode_mk, KRSDetail.nilai)
-        .join(KRS, KRSDetail.krs_id == KRS.id)
-        .where(
-            KRS.nim == nim,
-            KRS.semester < semester,
-            KRS.status == KRSStatus.APPROVED,
-            KRSDetail.kode_mk.in_(prereq_codes),
-            KRSDetail.nilai.is_not(None),
-        )
-    )
-    rows = db.execute(stmt_passed).all()
-
+    # yang kartu KRS-nya sudah APPROVED dalam satu kali query (bebas N+1).
+    # Jika tabel skala_nilai terisi, baca kelulusan langsung dari kolom `lulus` (data-driven).
+    has_skala = db.scalars(select(SkalaNilai.huruf).limit(1)).first() is not None
     lulus_codes: set[str] = set()
-    for r_kode, r_nilai in rows:
-        if resolve_grade_weight(None, r_nilai) >= MIN_PASSING_WEIGHT:
-            lulus_codes.add(r_kode)
+    if has_skala:
+        stmt_passed = (
+            select(KRSDetail.kode_mk)
+            .join(KRS, KRSDetail.krs_id == KRS.id)
+            .join(SkalaNilai, KRSDetail.nilai == SkalaNilai.huruf)
+            .where(
+                KRS.nim == nim,
+                KRS.semester < semester,
+                KRS.status == KRSStatus.APPROVED,
+                KRSDetail.kode_mk.in_(prereq_codes),
+                SkalaNilai.lulus.is_(True),
+            )
+        )
+        lulus_codes = set(db.scalars(stmt_passed).all())
+    else:
+        stmt_passed = (
+            select(KRSDetail.kode_mk, KRSDetail.nilai)
+            .join(KRS, KRSDetail.krs_id == KRS.id)
+            .where(
+                KRS.nim == nim,
+                KRS.semester < semester,
+                KRS.status == KRSStatus.APPROVED,
+                KRSDetail.kode_mk.in_(prereq_codes),
+                KRSDetail.nilai.is_not(None),
+            )
+        )
+        rows = db.execute(stmt_passed).all()
+        for r_kode, r_nilai in rows:
+            if resolve_grade_weight(None, r_nilai) >= MIN_PASSING_WEIGHT:
+                lulus_codes.add(r_kode)
 
     kurang = [p.nama for p in prereq_list if p.kode_mk not in lulus_codes]
     return kurang

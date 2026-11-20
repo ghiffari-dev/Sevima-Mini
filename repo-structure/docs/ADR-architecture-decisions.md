@@ -4,7 +4,7 @@
 Disetujui
 
 ## 2. Konteks
-Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan implementasi backend RESTful API (FastAPI & SQLAlchemy) yang mencakup manajemen pengguna, katalog mata kuliah, penawaran kelas per semester, KRS, modul penjadwalan kuliah & ruangan (4 entitas domain `Ruangan`, `Dosen`, `Kelas`, `Jadwal`, deteksi bentrok 3 dimensi dengan *Grouping + Sort & Sweep* dan *Naive* sebagai acuan, penguncian pesimis `FOR UPDATE`, validasi kapasitas `409 Conflict`, notifikasi berbasis *Observer Pattern*, saran penjadwalan ulang *AI-Powered* beserta *Conflict Resolver UI*, serta sinkronisasi invalidasi KRS), pencatatan nilai, serta pembayaran. Desain dikembangkan secara iteratif melalui analisis arsitektur berorientasi objek (OOP) dan prinsip SOLID.
+Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan implementasi backend RESTful API (FastAPI & SQLAlchemy) yang mencakup manajemen pengguna, katalog mata kuliah, penawaran kelas per semester, KRS, modul penjadwalan kuliah & ruangan (4 entitas domain `Ruangan`, `Dosen`, `Kelas`, `Jadwal`, deteksi bentrok 3 dimensi dengan *Grouping + Sort & Sweep* dan *Naive* sebagai acuan, penguncian pesimis `FOR UPDATE`, validasi kapasitas `409 Conflict`, notifikasi berbasis *Observer Pattern*, saran penjadwalan ulang *AI-Powered* beserta *Conflict Resolver UI*, serta sinkronisasi invalidasi KRS), modul pencatatan nilai, audit trail, dan perhitungan IPS/IPK presisi desimal, serta pembayaran. Desain dikembangkan secara iteratif melalui analisis arsitektur berorientasi objek (OOP) dan prinsip SOLID.
 
 ## 3. Keputusan Arsitektur
 
@@ -144,6 +144,39 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
   - `UID` stabil (`jadwal-{id}@sevima-mini.ac.id`) dan kolom `jadwal.sequence` (dinaikkan tiap kali jadwal diubah via `update_schedule`) agar impor ulang memperbarui event lama tanpa duplikasi.
   - `DTSTART`/`DTEND` dihitung dari tanggal pertemuan pertama sesuai awal semester dan hari kuliah, dilengkapi `RRULE:FREQ=WEEKLY;UNTIL=...Z` (konversi akhir semester ke UTC berakhiran `Z` sesuai RFC 5545 saat `DTSTART` memakai `TZID`).
 
+### 3.20 Single Source of Truth Nilai (`krs_detail`), `skala_nilai` Berbasis Data, & Asumsi Kelulusan (Minggu 9)
+- **Menyimpan Nilai di `krs_detail` vs Tabel `grades` Terpisah:**
+  - Sejak Minggu ke-5, tabel `krs_detail` sudah memiliki kolom `nilai` (`nullable`), dan sejak Minggu ke-7 memiliki `kelas_id`, sehingga satu baris `krs_detail` secara unik merepresentasikan **satu mahasiswa pada satu kelas di satu semester**. Query prasyarat KRS juga membaca kolom ini.
+  - Membuat tabel `grades` kedua untuk modul nilai akan menciptakan dua sumber kebenaran (*dual source of truth*) yang rentan menyimpang. Oleh karena itu, modul nilai Minggu ke-9 menggunakan **`krs_detail.nilai`** sebagai *single source of truth*, dengan **Foreign Key** `fk_krs_detail_nilai_skala_nilai` ke `skala_nilai.huruf` (`d4e5f6grd010`) agar huruf tak dikenal ditolak langsung oleh database. Model legacy `Grade` (`grades`) di `backend/app/models/grade.py` dipertahankan sementara semata untuk *backward-compatibility* test awal Minggu 1–4.
+- **Skala Nilai `NUMERIC(3, 2)` / `Decimal` & Kolom `lulus BOOLEAN`:**
+  - Tabel `skala_nilai` menyimpan `huruf` (`A`, `B`, `C`, `D`, `E`), `bobot` bertipe `NUMERIC(3, 2)` (`Decimal` di Python—bukan `float`), dan kolom `lulus` (`BOOLEAN`).
+  - Menyimpan kelulusan sebagai **data** di kolom `skala_nilai.lulus` (bukan konstanta `bobot >= 2.0` di kode) membuat `GPACalculator` maupun `PrerequisiteValidator` adaptif terhadap perubahan kebijakan akademik cukup dengan mengubah baris data.
+- **Penanganan Kontradiksi Spesifikasi `>= D (2.0)`:**
+  - Dokumen tugas menyatakan *"Lulus mata kuliah jika nilai >= D (2.0)"*, padahal `D = 1.00` dan `2.00 = C`. AI dilarang menebak diam-diam; pertanyaan resmi dicatat di `repo-structure/docs/stakeholder-questions-minggu-9.md`, sementara sistem memakai asumsi sementara **minimal `C` (`A/B/C = True`, `D/E = False`)** agar selaras dengan angka `2.0` dan prasyarat Minggu 5–6.
+
+### 3.21 Penjaga Input Nilai 2 Lapis, `PresensiPort` (DIP Stub), `FOR UPDATE`, & `get_current_dosen`
+- **Dua Penjaga di `GradeService.input_nilai()`:**
+  1. **Otorisasi Kepemilikan (`is_pengampu`):** Memeriksa apakah terdapat baris pada tabel `jadwal` yang memasangkan `kelas_id` dengan `dosen_id`. Jika bukan pengampu, langsung melempar `GradeForbiddenError` (`403`) **sebelum** membaca data mahasiswa mana pun. Identitas dosen diambil dari JWT via dependency `get_current_dosen` (`role == "dosen"` + klaim `dosen_id`/`nidn` ke master `dosen`), bukan dari *request body*.
+  2. **Penjaga Presensi (`>= 75%`) via `PresensiPort`:** Karena modul presensi baru dibangun pada Minggu ke-12, `GradeService` menerapkan *Dependency Inversion Principle* dengan menerima protokol `PresensiPort` melalui konstruktor dan memakai `StubPresensiPort` (berbasis kamus memori) untuk sementara. Batas tepat `75%` diizinkan; `< 75%` ditolak dengan `PresensiKurangError` (`422`). Saat Minggu ke-12 selesai, implementasi DB nyata cukup disuntikkan tanpa mengubah satu baris pun di `GradeService`.
+- **Pencegahan Race Condition & Idempotensi PUT:**
+  - Baris `KRSDetail` dikunci dengan `.with_for_update()` (`404` jika tidak ada) agar dua dosen pengampu paralel tidak saling menimpa nilai tanpa jejak.
+  - Endpoint `PUT /api/kelas/{kelas_id}/nilai/{nim}` memvalidasi payload `NilaiIn` (`^[A-E]$`, `min_length=1`, `max_length=1` $\rightarrow$ `422` untuk input seperti `"F+"` atau huruf kecil) sebelum masuk servis, bersifat *no-op* jika huruf sama dengan yang tersimpan, mewajibkan `alasan` (`AlasanWajibError` `422`) saat mengubah nilai lama, dan menangani seluruh error secara polimorfik melalui `@app.exception_handler(GradeError)`.
+
+### 3.22 Compute-on-Read IPK, Functional Core, & Verifikasi SQL Aggregate
+- **Compute-on-Read vs Cache Kolom `ipk`:**
+  - Kriteria *"IPK terupdate otomatis saat nilai diinput"* dipenuhi dengan pola **hitung saat dibaca (*compute-on-read*)**, bukan menyimpan kolom cache `ipk`.
+  - Satu mahasiswa umumnya hanya memiliki $\le 60$ baris nilai selama kuliah sehingga 1 query terindeks `krs.nim` berjalan dalam hitungan milidetik dan menjamin IPK tidak pernah basi (*stale*) meskipun ada koreksi data. Jika kelak sistem memerlukan laporan massal ribuan mahasiswa sekaligus, mekanisme *cache invalidation* dapat dibangun memakai Transactional Outbox + Observer dari Minggu ke-8.
+- **Presisi `Decimal` & *Functional Core, Imperative Shell*:**
+  - Logika inti dipisahkan dari ORM ke dataclass *frozen* `Skala` dan `NilaiRecord` beserta tiga fungsi murni (`rata`, `hitung_ips`, `hitung_ipk`) di `backend/app/services/gpa_calculator.py`. Seluruh aritmatika memakai `Decimal` (diinisialisasi dari string/integer, bukan `float`) dan dibulatkan **hanya sekali di akhir** dengan `ROUND_HALF_UP` (`0.01`) sehingga `3.125` menjadi `3.13` (bukan `3.12` oleh *banker's rounding* `round()`). Endpoint API mengirim `ips` dan `ipk` sebagai **string** 2 desimal (`"3.08"`) agar klien tidak mengonversinya kembali ke `float`.
+  - **Urutan Wajib `hitung_ipk`:** Ambil nilai terbaik per `kode_mk` berdasarkan **`bobot` numerik tertinggi** (bukan `max()` pada string huruf karena `'E' > 'A'` secara ASCII), **lalu** saring `skala[huruf].lulus`, dan hitung dari total mutu dibagi total SKS (mengembalikan `Decimal("0.00")` jika total SKS nol). `NilaiRepo` hanya bertugas menarik `records(nim)` (`nilai IS NOT NULL`) dan `skala()` untuk diserahkan ke `GPACalculator`. Tersedia pula `calculate_ipk_sql` (CTE `terbaik` + `ROW_NUMBER()` + `NULLIF`) untuk *differential testing*.
+
+### 3.23 Audit Trail `grade_history` dalam Satu Transaksi Service vs DB Trigger & View `riwayat_nilai`
+- **Satu Transaksi di `GradeService` vs Database Trigger:**
+  - Perubahan `krs_detail.nilai` dan penambahan baris `grade_history` (termasuk input pertama dengan `nilai_lama = NULL` serta stempel waktu UTC) dieksekusi di dalam satu blok transaksi `try ... db.commit() / except ... db.rollback()`.
+  - Pendekatan *service transaction* dipilih dibanding *database trigger* karena konteks aplikasi (`diubah_oleh` `dosen_id` dan `alasan`) tersedia langsung tanpa variabel sesi khusus, logikanya eksplisit dan mudah diuji, serta sintaksnya konsisten antara SQLite (pengujian) dan MySQL/PostgreSQL (produksi). Keduanya **tidak boleh dipakai bersamaan** agar satu perubahan tidak tercatat dua kali.
+- **Append-Only & SQL View `riwayat_nilai`:**
+  - Tabel `grade_history` bersifat *append-only* (tidak pernah di-`UPDATE` atau `DELETE`; di produksi hak `UPDATE`/`DELETE` untuk user aplikasi dicabut). SQL View `riwayat_nilai` menggabungkan `grade_history`, `krs_detail`, `krs`, `matakuliah`, dan `dosen` sehingga endpoint `GET /api/mahasiswa/{nim}/riwayat-nilai` dapat mengambil histori lengkap mahasiswa dengan satu `SELECT`.
+
 ## 4. Trade-off yang Dipertimbangkan
 1. **Inheritance & Polymorphism vs Flat Database Models**
    - *Kelebihan*: Menerapkan *Open/Closed Principle* dan *Liskov Substitution Principle* secara ketat pada domain OOP.
@@ -187,4 +220,16 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 14. **Generator iCalendar `.ics` Murni Python vs Library Eksternal (`icalendar`)**
     - *Kelebihan*: `+0` dependensi tambahan untuk format teks RFC 5545 yang relatif kecil (`VCALENDAR`/`VEVENT`/`VTIMEZONE`), serta memberi kendali penuh atas pemisah baris `CRLF` (`\r\n`), `UID`, `SEQUENCE`, dan format UTC `UNTIL`.
     - *Kekurangan*: Jika kelak dibutuhkan fitur iCalendar tingkat lanjut (seperti pengecualian tanggal libur `EXDATE` atau zona waktu DST dinamis lintas negara), pemakaian library `icalendar` + `dateutil` akan lebih hemat usaha.
+15. **`krs_detail.nilai` sebagai Single Source of Truth vs Tabel `grades` Terpisah**
+    - *Kelebihan*: Menghilangkan duplikasi sumber kebenaran antara prasyarat KRS dan modul nilai, memanfaatkan relasi `kelas_id` & `krs` yang sudah ada, serta menjaga integritas huruf melalui Foreign Key ke `skala_nilai.huruf`.
+    - *Kekurangan*: Memerlukan migrasi `batch_alter_table` pada SQLite (`d4e5f6grd010`) dan pembaruan fixture test lama agar mengisi `skala_nilai` terlebih dahulu sebelum menulis `KRSDetail.nilai`.
+16. **Compute-on-Read IPK vs Kolom Cache `ipk` di Database**
+    - *Kelebihan*: IPK dan IPS selalu konsisten 100% dengan data nilai mutakhir tanpa kompleksitas invalidasi cache, sangat cepat untuk ~60 baris per mahasiswa, dan menghindari risiko data basi akibat perubahan manual/remedial.
+    - *Kekurangan*: Jika kelak terdapat halaman rekap transkrip atau peringkat untuk ribuan mahasiswa dalam satu request, query agregasi per mahasiswa perlu digantikan oleh cache terkelola (via Transactional Outbox + Observer) atau query batch.
+17. **Functional Core (`Decimal` Pure Functions) vs Kalkulasi Langsung di ORM / SQL**
+    - *Kelebihan*: Fungsi murni (`rata`, `hitung_ips`, `hitung_ipk`) dapat diuji ratusan/ribuan kali per detik dengan `pytest.mark.parametrize` dan `Hypothesis` tanpa DB/mock, menjamin `Decimal` + `ROUND_HALF_UP` presisi penuh, dan menjadi *oracle* bagi *differential testing* versi SQL CTE.
+    - *Kekurangan*: Membutuhkan layer `NilaiRepo` tipis serta penyesuaian skema API agar IPK/IPS dikembalikan sebagai string 2 desimal (bukan float JSON).
+18. **Audit Trail via Satu Transaksi `GradeService` vs Database Trigger (+ `StubPresensiPort`)**
+    - *Kelebihan*: Menyimpan `diubah_oleh` (`dosen_id`) dan `alasan` secara portabel di SQLite maupun MySQL/PostgreSQL dalam satu unit atomik `try/commit/rollback`, sementara `PresensiPort` memungkinkan pengembangan & pengujian penuh Minggu 9 tanpa menunggu Modul Presensi Minggu 12.
+    - *Kekurangan*: Perubahan nilai langsung lewat SQL manual di luar aplikasi tidak terekam ke `grade_history` (diatasi di produksi dengan membatasi akses tulis langsung), dan fitur presensi nyata bergantung pada injeksi implementasi `PresensiPort` baru pada Minggu 12.
 

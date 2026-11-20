@@ -706,3 +706,26 @@ Mendokumentasikan arsitektur Modul Jadwal & Ruangan pada `repo-structure/` melal
 - **Catatan**: Pengubahan status KRS akibat perubahan jadwal diisolasi lewat `KRS.invalidate_by_schedule_change()` sehingga 28 kombinasi transisi ilegal di `test_krs_property.py` tetap utuh.
 
 ---
+
+## Log 16 — Klarifikasi Kontradiksi Spesifikasi & Pembaruan ADR Modul Nilai & Transkrip Bagian 1 (Minggu 9)
+
+### Tujuan
+Mendokumentasikan penanganan kontradiksi spesifikasi (*"nilai >= D (2.0)"*), kepatuhan privasi AI-First Charter (data dummy `Rina` & `Budi`), serta pembaruan **ADR-001 (`3.20–3.23` & *trade-off* `15–18`)** untuk Modul Nilai & Transkrip Bagian 1 pada branch `tugas-9`.
+
+### Perintah (Prompt)
+> "Analisis seluruh kebutuhan Modul Nilai & Transkrip Bagian 1 (Minggu 9), sebutkan seluruh ambiguitas spesifikasi terlebih dahulu sebelum menulis kode, susun pertanyaan tertulis ke stakeholder (`repo-structure/docs/stakeholder-questions-minggu-9.md`), lalu perbarui `repo-structure/docs/ADR-architecture-decisions.md` mencakup:
+> 1. Pemilihan `krs_detail.nilai` (FK ke `skala_nilai.huruf`) sebagai *single source of truth* vs tabel `grades` terpisah, tipe `NUMERIC(3,2)` / `Decimal`, serta penyimpanan aturan kelulusan pada kolom data `skala_nilai.lulus` (asumsi sementara minimal `C`).
+> 2. Penjaga input nilai 2 lapis (`is_pengampu` `403`, `get_current_dosen` JWT, `FOR UPDATE`, dan `PresensiPort` DIP stub $\ge 75\%$ hingga Minggu 12).
+> 3. Strategi *compute-on-read* IPK/IPS vs *cache* serta pola *Functional Core, Imperative Shell* (`Decimal` + `ROUND_HALF_UP`, `NilaiRepo`, `GPACalculator`, & SQL CTE `ROW_NUMBER()`).
+> 4. Audit trail *append-only* `grade_history` dalam satu transaksi `GradeService` vs database trigger serta SQL View `riwayat_nilai`."
+
+### Hasil (Hasil Implementasi)
+- Terbentuknya [`repo-structure/docs/stakeholder-questions-minggu-9.md`](../docs/stakeholder-questions-minggu-9.md) yang merinci kontradiksi `>= D (2.0)` vs `D = 1.00, C = 2.00`, dampak angka pada kasus dummy Rina (`3.08` vs `2.67`), pengaruhnya terhadap `PrerequisiteValidator`, 3 pertanyaan resmi untuk Dosen/Bagian Akademik, serta asumsi sementara di `skala_nilai.lulus`.
+- Pembaruan [`repo-structure/docs/ADR-architecture-decisions.md`](../docs/ADR-architecture-decisions.md) dengan sub-bab **3.20–3.23** dan poin *trade-off* **15–18**.
+- Pembaruan [`backend/ai-usage-log.md`](../../backend/ai-usage-log.md) (**Log 15** beserta revisi 7 bug klasik AI & siklus OPAR), [`.github/PULL_REQUEST_TEMPLATE.md`](../../.github/PULL_REQUEST_TEMPLATE.md), serta [`README.md`](../../README.md).
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Ambiguitas kebijakan akademik tidak diputus diam-diam oleh AI; arsitektur berbasis data (`skala_nilai.lulus`) dan *port/adapter* (`PresensiPort`) menjaga kode inti tetap stabil menghadapi keputusan stakeholder maupun integrasi Minggu 12, sekaligus mematuhi prinsip privasi AI-First Charter (hanya memakai data dummy).
+- **Catatan**: Saat integrasi Modul Presensi di Minggu 12 dan keluarnya jawaban stakeholder terkait nilai `D`, cukup menyuntikkan implementasi nyata `PresensiPort` dan/atau memperbarui 1 baris `skala_nilai` tanpa mengubah logika bisnis inti.
+
+---

@@ -27,8 +27,13 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
   - **Observer Pattern (`typing.Protocol`), Strategy `LogChannel`, & Transactional Outbox:** `ScheduleSubject` dan `NotificationManager` dirangkai sekali saat startup untuk menyiarkan `ScheduleEvent` (frozen dataclass dengan `event_id`, `before`, `after`, dan `EventType`) ke `StudentObserver`, `LecturerObserver`, dan `AdminObserver` dengan isolasi `try/except` per observer serta `LogChannel` (**Email / SMS / Push**) ber-*idempotency key*. Perubahan/penghapusan jadwal menulis baris `outbox` dalam satu transaksi DB, lalu `OutboxDispatcher` mengirimkannya **setelah `commit()`** dengan `FOR UPDATE SKIP LOCKED` dan retry maks. 5× sebelum `failed`.
   - **AI Rescheduler (`LLMClient` + 4 Saringan), Conflict Resolver UI, & RBAC Admin:** Abstraksi `LLMClient.complete()` (`GeminiLLMClient` JSON mode, `OpenRouterLLMClient`, `OpenAILLMClient`, `FakeLLMClient`) dengan perhitungan slot kosong deterministik oleh backend serta 4 saringan ketat (parsing `[`..`]`, skema Pydantic `AISuggestionItem`, cek eksistensi & kapasitas ruangan di DB, dan uji `detect_conflicts_sweep()` calon ID `-1`). Seluruh endpoint manajemen `/api/schedules/*` dilindungi RBAC JWT `require_admin_akademik` (`POST /api/auth/login`) dan terhubung ke dashboard `/dashboard/conflicts`.
   - **Integrasi KRS (`Actor.SYSTEM`) & Ekspor iCalendar (`.ics`):** Perubahan/penghapusan jadwal otomatis memindahkan KRS `SUBMITTED`/`APPROVED` terdampak ke `REVISION` lewat satu pintu `KRS.transition(..., actor=Actor.SYSTEM)` (membiarkan `DRAFT`/`REVISION` utuh) lengkap dengan `KRSLog` dan `Notifikasi` dalam satu transaksi ACID; tersedia juga ekspor `/api/schedules/export.ics` sesuai RFC 5545 (`CRLF`, `UID` stabil, `DTSTART`/`DTEND` `Asia/Jakarta`, `RRULE` `UNTIL` UTC, dan kenaikan `SEQUENCE`).
-- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`c3d4e5sch009 (head)`), dan skrip inisialisasi database.
-- **Automated Testing (126 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine, integrasi `KRSManager` + DB, *Property-Based Testing* (**2×1000 contoh acak** batas SKS $\le$ 24 & bebas bentrok, **42 kombinasi transisi ilegal** dari 48 kombinasi, **200 contoh CSP**, **2×300 contoh** properti bebas bentrok & *differential testing* `Sort & Sweep` vs `Naive`), pengujian 7 kasus bug klasik AI, penguncian pesimis, **4 tes utama Minggu 8** (`SpyObserver` attach 2×, `BrokenObserver` tidak hentikan observer lain, integrasi KRS Rina `APPROVED -> REVISION` + 1 baris `Outbox` + `SKIP LOCKED` + retry/idempotency, dan 4 saringan via `FakeLLMClient`), RBAC Admin Akademik (`401`/`403`/`200`), ekspor `.ics`, serta API integration test via `TestClient` untuk PMB, KRS, & Schedule.
+- **Modul Nilai & Transkrip Bagian 1 (Minggu 9):**
+  - **Single Source of Truth (`krs_detail.nilai`), `skala_nilai`, & Migrasi (`d4e5f6grd010`):** Nilai per mahasiswa per kelas disimpan di `krs_detail.nilai` dengan *Foreign Key* ke `skala_nilai.huruf` (`A=4.00, B=3.00, C=2.00, D=1.00, E=0.00` bertipe `NUMERIC(3,2)` / `Decimal` dan kolom `lulus BOOLEAN` berbasis data). Ambiguitas dokumen tugas (`>= D (2.0)`) didokumentasikan pada [`repo-structure/docs/stakeholder-questions-minggu-9.md`](repo-structure/docs/stakeholder-questions-minggu-9.md) dengan asumsi sementara minimal `C` lulus (`A/B/C = True`, `D/E = False`) yang juga dibaca oleh `PrerequisiteValidator`.
+  - **Penjaga Input Nilai 2 Lapis (`GradeService` & `PresensiPort` DIP Stub):** Validasi endpoint idempoten `PUT /api/kelas/{kelas_id}/nilai/{nim}` via `NilaiIn` (`^[A-E]$` $\rightarrow$ `422`), autentikasi JWT `get_current_dosen`, penjaga pertama `is_pengampu(kelas_id, dosen_id)` via tabel `jadwal` (`403 Forbidden`), penguncian baris `KRSDetail` dengan `with_for_update()` (`404`), dan penjaga kedua presensi $\ge 75\%$ melalui protokol `PresensiPort` (`StubPresensiPort` sementara hingga Modul Presensi Minggu 12, `< 75%` $\rightarrow$ `422`).
+  - **Audit Trail `grade_history` (Append-Only) & SQL View `riwayat_nilai`:** Perubahan nilai (termasuk input pertama dengan `nilai_lama = NULL`) beserta stempel waktu UTC dan `alasan` wajib (saat ubah nilai) ditulis dalam **satu transaksi atomik** bersama update `krs_detail.nilai`, lalu disajikan lewat SQL View `riwayat_nilai` (`GET /api/mahasiswa/{nim}/riwayat-nilai`).
+  - **Kalkulator IPS & IPK Presisi `Decimal` (*Functional Core, Imperative Shell*):** Fungsi murni `rata`, `hitung_ips`, dan `hitung_ipk` memakai `Decimal` dengan pembulatan `ROUND_HALF_UP` (`0.01`) sekali di akhir (`3.125 -> 3.13`, total SKS nol $\rightarrow$ `0.00`, mata kuliah ulang memilih bobot terbaik per `kode_mk` sebelum menyaring `lulus`), didukung `NilaiRepo` & `GPACalculator` (*compute-on-read* dengan respons string 2 desimal) serta pembanding SQL CTE `calculate_ipk_sql` (`ROW_NUMBER()` + `NULLIF`), dan form web dosen `/dashboard/grades`.
+- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`d4e5f6grd010 (head)`), dan skrip inisialisasi database.
+- **Automated Testing (149 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine (`40`), *Property-Based Testing* KRS (`48`: **2×1000 contoh acak** SKS & bentrok, **42 transisi ilegal** dari 48 kombinasi, **200 contoh CSP**), integrasi PMB (`8`), API KRS (`6`), Modul Jadwal (`24`: 7 kasus bug AI, 2×300 properti & differential test `Sort & Sweep` vs `Naive`, 4 tes Minggu 8, RBAC, & `.ics`), serta Modul Nilai Minggu 9 (`23` di `test_grade.py`: **11 kasus IPK** berparameter, **3 kasus IPS**, **1 tes tukar skala `D` lulus**, **3×300 properti `Hypothesis`** IPK $\in [0,4]$ / tambah `A` monotonik / invarian permutasi, differential test SQL CTE, `GradeService` atomik/403/404/422/FK/view, dan API + UI `/dashboard/grades`).
 
 ## Ringkasan Endpoint API, State Machine KRS, & Alur Penjadwalan
 
@@ -62,7 +67,15 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 | **Schedule** | `GET /api/schedules/outbox` | — | `200`, `401`, `403` | Daftar baris Transactional Outbox (`pending`/`sent`/`failed`, RBAC Admin) |
 | **Schedule** | `POST /api/schedules/outbox/dispatch` | — | `200`, `401`, `403` | Proses ulang baris Outbox `pending` (RBAC Admin) |
 | **Schedule** | `POST /api/schedules/seed-demo` | — | `200`, `401`, `403` | Muat skenario data demo bentrok & akun Admin demo (RBAC Admin) |
+| **Grades** | `GET /api/kelas/pengampu` | — | `200`, `401`, `403` | Daftar kelas yang diampu oleh dosen login (`get_current_dosen`) |
+| **Grades** | `GET /api/kelas/{kelas_id}/peserta` | — | `200`, `401`, `403`, `404` | Daftar peserta kelas beserta persentase presensi & kelayakan input nilai |
+| **Grades** | `PUT /api/kelas/{kelas_id}/nilai/{nim}` | `huruf` (`A..E`), `alasan` (wajib saat ubah) | `200`, `401`, `403`, `404`, `422` | Input/ubah nilai oleh dosen pengampu (`>= 75%` presensi) + audit `grade_history` atomik |
+| **Grades** | `GET /api/mahasiswa/{nim}/ips/{semester}` | — | `200` | Hitung IPS semester (semua MK termasuk D/E, string 2 desimal `ROUND_HALF_UP`) |
+| **Grades** | `GET /api/mahasiswa/{nim}/ipk` | — | `200` | Hitung IPK kumulatif (*compute-on-read*, nilai terbaik per MK lulus, string 2 desimal) |
+| **Grades** | `GET /api/mahasiswa/{nim}/riwayat-nilai` | — | `200` | Riwayat perubahan nilai mahasiswa dari SQL View `riwayat_nilai` |
+| **Grades** | `POST /api/grades/seed-demo` | — | `200` | Muat skenario data dummy `Rina` (presensi 90%) & `Budi` (presensi 70%) |
 | **UI** | `GET /dashboard/conflicts` | — | `200` | Halaman **Conflict Resolver UI** (dengan bilah login Admin JWT) |
+| **UI** | `GET /dashboard/grades` | — | `200` | Halaman **Form Input Nilai Dosen & Audit Trail** (dengan bilah login Dosen JWT) |
 
 ### Alur Transisi Sah State Machine KRS
 
@@ -82,6 +95,12 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 3. **Satu Transaksi ACID (`PUT /api/schedules/{id}`):** Mengunci baris `Ruangan -> Dosen`, memvalidasi bentrok di SQL dan kapasitas (`409`), memperbarui tabel `jadwal` dan menaikkan `sequence`, memindahkan KRS `SUBMITTED`/`APPROVED` terdampak ke `REVISION` via `Actor.SYSTEM`, serta menulis baris `Outbox` (`pending`) sebelum **`COMMIT`**.
 4. **Dispatcher & Ekspor `.ics`:** Setelah `COMMIT`, `OutboxDispatcher.run()` mengunci baris `pending` (`SKIP LOCKED`) dan memanggil `ScheduleSubject.notify()` (`try/except` per observer, kunci idempotensi di `LogChannel`, retry maks. 5× $\rightarrow$ `failed`); mahasiswa dapat mengunduh jadwal terbaru melalui `GET /api/schedules/export.ics`.
 
+### Alur Modul Nilai & Transkrip Bagian 1 (Minggu 9)
+
+1. **Penjaga 2 Lapis (`PUT /api/kelas/{kelas_id}/nilai/{nim}`):** Skema Pydantic `NilaiIn` memvalidasi huruf tunggal `^[A-E]$` (`422`), `get_current_dosen` mengambil identitas dosen dari token JWT (`401`/`403`), `GradeService` memeriksa `is_pengampu(kelas_id, dosen_id)` (`403`) sebelum menyentuh data mahasiswa, mengunci `KRSDetail` via `.with_for_update()` (`404`), dan mengecek presensi $\ge 75\%$ lewat `PresensiPort` (`StubPresensiPort` hingga Minggu 12).
+2. **Audit Trail Atomik (`grade_history` & `riwayat_nilai`):** Jika nilai sama, endpoint bersifat idempoten (*no-op*); jika mengubah nilai lama, `alasan` wajib diisi (`422`). Penambahan baris `grade_history` (`nilai_lama` nullable untuk input pertama, UTC) dan pembaruan `krs_detail.nilai` dikomit dalam satu transaksi DB, lalu terbaca melalui SQL View `riwayat_nilai`.
+3. **IPS & IPK Presisi `Decimal` (*Compute-on-Read*):** `GPACalculator` membaca `records(nim)` (`nilai IS NOT NULL`) dan `skala_nilai` dari `NilaiRepo` lalu menyerahkannya ke fungsi murni `hitung_ips` dan `hitung_ipk` (`Decimal` + `ROUND_HALF_UP` sekali di akhir, bobot terbaik per `kode_mk` lebih dulu baru menyaring `lulus == True`). Nilai dikirim ke API sebagai string 2 desimal agar tidak terkonversi ke `float`.
+
 ## Struktur Proyek
 
 ```text
@@ -96,9 +115,10 @@ repo-structure/
 │   ├── sequence-pmb.mmd         # Diagram sekuens PMB (Mermaid)
 │   └── sequence-schedule-observer.mmd  # Diagram sekuens Observer Pattern & Jadwal (Mermaid)
 ├── docs/
-│   └── ADR-architecture-decisions.md  # Keputusan Arsitektur Sistem (ADR-001)
+│   ├── ADR-architecture-decisions.md  # Keputusan Arsitektur Sistem (ADR-001)
+│   └── stakeholder-questions-minggu-9.md  # Klarifikasi kontradiksi spesifikasi >= D (2.0) ke stakeholder
 └── prompts/
-    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML & arsitektur (Log 01–15)
+    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML & arsitektur (Log 01–16)
 
 backend/
 ├── alembic/                     # Migrasi database Alembic
@@ -110,31 +130,38 @@ backend/
 │       ├── 9c3205krs006_krs_state_columns.py
 │       ├── a1b2c3sch007_tabel_jadwal_ruangan.py
 │       ├── b2c3d4sch008_refactor_domain_jadwal.py
-│       └── c3d4e5sch009_outbox_dan_sequence_jadwal.py
+│       ├── c3d4e5sch009_outbox_dan_sequence_jadwal.py
+│       └── d4e5f6grd010_skala_nilai_grade_history.py
 ├── alembic.ini                  # Konfigurasi Alembic
 ├── app/
-│   ├── core/                    # Konfigurasi (DB, Security JWT & RBAC Admin, & env AI opsional)
+│   ├── core/                    # Konfigurasi (DB, Security JWT Admin & get_current_dosen, env AI)
 │   ├── models/                  # Model SQLAlchemy 2.0 ORM
+│   │   ├── grade.py             # SkalaNilai, GradeHistory, RIWAYAT_NILAI_VIEW_SQL, GradeError, & Grade legacy
 │   │   ├── schedule.py          # Model Ruangan, Dosen, Kelas, Jadwal (sequence), Outbox, & ScheduleError (Minggu 7–8)
-│   │   └── ...                  # Model PMB, KRS, User, Course, Enrollment, Grade, Payment
+│   │   └── ...                  # Model PMB, KRS (KRSDetail FK skala_nilai), User, Course, Enrollment, Payment
 │   ├── repositories/            # Repository Pattern (IPMBRepository & SQLite)
 │   ├── routers/                 # Endpoint FastAPI
-│   │   ├── auth.py              # Endpoint Login JWT (/api/auth/login)
+│   │   ├── auth.py              # Endpoint Login JWT Admin & Dosen (/api/auth/login)
+│   │   ├── grade.py             # Endpoint Input Nilai, IPS/IPK, Riwayat, & Seed Demo (/api/kelas/*/nilai/*, /api/mahasiswa/*)
 │   │   ├── pmb.py               # Endpoint PMB (/api/pmb)
 │   │   ├── krs.py               # Endpoint KRS & CSP Recommender (/api/krs)
 │   │   └── schedule.py          # Endpoint Jadwal, Outbox, Conflict, AI, .ics, & Logs (/api/schedules)
-│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py & Outbox)
+│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py & grade.py NilaiIn/NilaiOut)
 │   ├── services/                # Business Logic Layer
 │   │   ├── calendar_exporter.py # Ekspor iCalendar RFC 5545 (.ics) dengan CRLF, UID, RRULE UTC, & SEQUENCE
 │   │   ├── conflict_detector.py # Detektor bentrok Naive & Grouping + Sort & Sweep + cek_kapasitas
+│   │   ├── gpa_calculator.py    # Pure core Decimal (rata, hitung_ips, hitung_ipk), NilaiRepo, GPACalculator, & SQL CTE
+│   │   ├── grade_service.py     # PresensiPort + StubPresensiPort & GradeService (403, FOR UPDATE, audit trail 1 transaksi)
 │   │   ├── schedule_observer.py # Observer Protocol, LogChannel (idempotency key), & OutboxDispatcher
 │   │   ├── schedule_recommender.py # LLMClient + 4 Saringan Pydantic/Kapasitas/Bentrok + Rule-Based Fallback
 │   │   ├── scheduling_service.py   # Layanan Penjadwalan (locking pesimis, SQL conflict, Outbox & KRS ACID)
 │   │   └── ...                  # pmb_service, krs_manager, krs_validator, krs_recommender
-│   ├── static/                  # Conflict Resolver Admin UI
-│   │   └── conflict_resolver.html
+│   ├── static/                  # Dashboard & Form Web UI
+│   │   ├── conflict_resolver.html
+│   │   └── grade_input.html     # Form web input nilai dosen pengampu & audit trail (/dashboard/grades)
 │   └── main.py                  # Entry Point FastAPI, Exception Handler, & Dashboard UI
 ├── tests/
+│   ├── test_grade.py            # Unit (11 IPK + 3 IPS + tukar skala), 3 Properti Hypothesis, Integration, & API/UI (Minggu 9)
 │   ├── test_krs_api.py          # API Integration Testing KRS (TestClient)
 │   ├── test_krs_property.py     # Property-Based Testing (Hypothesis) & 42 Transisi Ilegal (48 Kombinasi)
 │   └── test_schedule.py         # Unit, Property, 4 Tes Minggu 8, RBAC, Ekspor .ics, & API/UI Tests
@@ -142,7 +169,7 @@ backend/
 ├── test_models_and_schemas.py   # Unit & Integration Test Model, Validator, & State Machine KRS
 ├── test_pmb.py                  # API Integration Testing PMB (Pytest)
 ├── requirements.txt             # Daftar Dependensi Python
-└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6–8)
+└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6–9)
 ```
 
 ## Teknologi & Tools
@@ -172,7 +199,7 @@ backend/
    ```
 5. **Menjalankan Seluruh Test Suite (Lintas OS — Windows PowerShell & Linux/macOS):**
    ```bash
-   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py -v
+   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py backend/tests/test_grade.py -v
    ```
 6. **Menjalankan Server Backend (dari folder `backend/` agar terhubung ke `backend/pmb.db` hasil migrasi Alembic):**
    ```bash
@@ -180,6 +207,7 @@ backend/
    ```
    * Akses dokumentasi API interaktif (Swagger UI) di: http://127.0.0.1:8000/docs
    * Akses **Conflict Resolver Admin UI** di: http://127.0.0.1:8000/dashboard/conflicts (klik **Login Admin** dengan akun demo `admin.akademik@sevima.ac.id` / `admin123`, lalu klik **Muat Data Demo Bentrok**).
+   * Akses **Form Input Nilai Dosen & Audit Trail** di: http://127.0.0.1:8000/dashboard/grades (klik **Muat Data Demo (Rina 90% & Budi 70%)**, lalu klik **Login Dosen Pengampu** dengan akun demo `dosen.pengampu@sevima.ac.id` / `dosen123`).
    * Unduh jadwal kuliah dalam format **iCalendar (.ics)** di: http://127.0.0.1:8000/api/schedules/export.ics (opsional `?semester=20251&nim=2025001-0001`).
 
 ## Lisensi

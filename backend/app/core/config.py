@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     AI_MODEL: str | None = None
     ADMIN_DEMO_EMAIL: str = "admin.akademik@sevima.ac.id"
     ADMIN_DEMO_PASSWORD: str = "admin123"
+    DOSEN_DEMO_EMAIL: str = "dosen.pengampu@sevima.ac.id"
+    DOSEN_DEMO_PASSWORD: str = "dosen123"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
