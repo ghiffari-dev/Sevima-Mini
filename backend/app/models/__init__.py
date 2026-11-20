@@ -71,4 +71,22 @@ from app.models.schedule import (
     format_hari,
     normalize_hari,
 )
+from app.models.attendance import (
+    AttendanceError,
+    AttendanceForbiddenError,
+    AttendanceNotFoundError,
+    AttendanceRecord,
+    AttendanceSession,
+    AttendanceStatus,
+    DuplicateAttendanceError,
+    GeolocationError,
+    GeolocationRequiredError,
+    NotEnrolledError,
+    OutsideAttendanceWindowError,
+    QRExpiredError,
+    QRTokenInvalidError,
+    RateLimitExceededError,
+    SessionAlreadyOpenError,
+    SessionStatus,
+)
 

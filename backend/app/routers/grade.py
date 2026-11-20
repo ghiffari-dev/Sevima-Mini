@@ -15,6 +15,7 @@ from app.schemas.grade import (
     NilaiIn,
     NilaiOut,
 )
+from app.services.attendance_service import DatabasePresensiPort
 from app.services.gpa_calculator import GPACalculator
 from app.services.grade_service import (
     GradeService,
@@ -25,9 +26,11 @@ from app.services.grade_service import (
 router = APIRouter()
 
 
-def get_presensi_port() -> PresensiPort:
-    """Dependency untuk PresensiPort (sementara menggunakan stub sebelum Minggu 12)."""
-    return default_presensi_stub
+def get_presensi_port(
+    db: Session = Depends(get_orm_db),
+) -> PresensiPort:
+    """Dependency untuk PresensiPort (terhubung ke DatabasePresensiPort Minggu 12 dengan fallback stub)."""
+    return DatabasePresensiPort(db=db, fallback_stub=default_presensi_stub)
 
 
 def get_grade_service(

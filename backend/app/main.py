@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.core.config import settings
+from app.models.attendance import AttendanceError
 from app.models.finance import FinanceError
 from app.models.grade import GradeError
 from app.models.krs import KRSError
@@ -56,6 +57,16 @@ async def finance_error(request: Request, exc: FinanceError):
     return JSONResponse(status_code=exc.status_code, content=exc.body())
 
 
+@app.exception_handler(AttendanceError)
+async def attendance_error(request: Request, exc: AttendanceError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.body(),
+        headers=exc.headers or None,
+    )
+
+
+
 DB_PATH = "backend/pmb.db"
 
 def get_db():
@@ -66,18 +77,26 @@ def get_db():
     finally:
         conn.close()
 
-from app.routers import auth, finance, grade, krs, pmb, schedule
+from app.routers import attendance, auth, finance, grade, krs, pmb, schedule
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(pmb.router, prefix="/api/pmb", tags=["PMB"])
 app.include_router(krs.router, prefix="/api/krs", tags=["KRS"])
 app.include_router(schedule.router, prefix="/api/schedules", tags=["Schedules"])
 app.include_router(grade.router, prefix="/api", tags=["Grades"])
 app.include_router(finance.router, prefix="/api/finance", tags=["Finance"])
+app.include_router(attendance.router, prefix="/api/attendance", tags=["Attendance"])
+app.include_router(
+    attendance.router,
+    prefix="/attendance",
+    tags=["Attendance"],
+    include_in_schema=False,
+)
 
 
 _CONFLICT_UI_PATH = Path(__file__).resolve().parent / "static" / "conflict_resolver.html"
 _GRADE_UI_PATH = Path(__file__).resolve().parent / "static" / "grade_input.html"
 _FINANCE_UI_PATH = Path(__file__).resolve().parent / "static" / "finance_dashboard.html"
+_ATTENDANCE_UI_PATH = Path(__file__).resolve().parent / "static" / "attendance_dashboard.html"
 
 
 @app.get("/dashboard/conflicts", include_in_schema=False)
@@ -96,3 +115,10 @@ def grade_input_dashboard():
 def finance_dashboard():
     """Menyajikan Dashboard Keuangan SPP (real-time tagihan, collection rate, webhook, & AI insights)."""
     return FileResponse(_FINANCE_UI_PATH)
+
+
+@app.get("/dashboard/attendance", include_in_schema=False)
+def attendance_dashboard():
+    """Menyajikan Dashboard Presensi QR Code Berotasi, Scanner Geolokasi, Laporan Excel, & AI Insights."""
+    return FileResponse(_ATTENDANCE_UI_PATH)
+

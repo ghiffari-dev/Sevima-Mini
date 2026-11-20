@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SEVIMA-Mini — Dashboard Presensi QR Code & AI Attendance Insights</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 { margin: 0; font-size: 1.5rem; }
+    .header p { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    button, .btn {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      font-size: 0.88rem;
+    }
+    button.secondary { background: #475569; }
+    button.success { background: var(--success); }
+    button.warning { background: var(--warning); color: #0f172a; }
+    button.danger { background: var(--danger); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 1.12rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .field-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .field-row label {
+      display: flex;
+      flex-direction: column;
+      font-size: 0.8rem;
+      color: var(--muted);
+      flex: 1;
+      min-width: 110px;
+    }
+    input, select {
+      margin-top: 4px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+    }
+    .qr-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #fff;
+      color: #0f172a;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 12px 0;
+    }
+    .qr-box img {
+      width: 210px;
+      height: 210px;
+      object-fit: contain;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 700;
+    }
+    .badge.ok { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .badge.warn { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    .badge.err { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+      margin-top: 10px;
+    }
+    th, td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    .status-banner {
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #1e3a8a;
+      margin-bottom: 18px;
+      font-size: 0.9rem;
+    }
+    ul.clean { padding-left: 18px; margin: 8px 0; }
+    ul.clean li { margin-bottom: 6px; font-size: 0.88rem; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>MINGGU 12: Dashboard Presensi QR Code & AI Attendance Insights</h1>
+      <p>Rotasi QR Otomatis (Anti-Replay), Validasi Lokasi GPS (Geofencing Haversine), Rekap Excel, & Early Warning AI</p>
+    </div>
+    <div class="toolbar">
+      <button onclick="loginDosen()">Login Dosen Demo</button>
+      <button class="success" onclick="seedDemo()">1. Muat Data Demo Presensi</button>
+      <button class="warning" onclick="refreshAll()">Muat Ulang Laporan & AI</button>
+    </div>
+  </div>
+
+  <div id="statusBanner" class="status-banner">
+    Klik <b>"1. Muat Data Demo Presensi"</b> untuk menyiapkan Kelas IF301-A, 5 mahasiswa, 4 sesi historis Senin 07:00, dan jadwal kuliah aktif hari ini.
+  </div>
+
+  <div class="grid">
+    <!-- Panel 1: QR Code Generator Berotasi -->
+    <div class="card">
+      <h2>
+        <span>1. QR Generation Service (Auto-Rotate)</span>
+        <span id="windowBadge" class="badge ok">Window #0</span>
+      </h2>
+      <div class="field-row">
+        <label>Schedule ID (Hari Ini)
+          <input type="number" id="scheduleIdInput" value="2" min="1" />
+        </label>
+        <label>Lat Ruang Kuliah
+          <input type="number" id="dosenLat" value="-7.2797" step="0.0001" />
+        </label>
+        <label>Lon Ruang Kuliah
+          <input type="number" id="dosenLon" value="112.7975" step="0.0001" />
+        </label>
+        <label>Radius (m)
+          <input type="number" id="dosenRadius" value="100" min="10" />
+        </label>
+      </div>
+      <div class="toolbar">
+        <button onclick="generateQR()">Generate / Refresh QR</button>
+        <span id="countdownLabel" style="font-size:0.85rem;color:var(--muted);">Rotasi otomatis tiap 120 detik</span>
+      </div>
+      <div class="qr-box">
+        <img id="qrImage" alt="QR Code Presensi" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+        <small id="qrCaption" style="margin-top:8px;font-weight:600;">Belum ada QR aktif</small>
+      </div>
+      <div class="field-row">
+        <label>JWT Token Aktif (Otomatis Terisi untuk Simulasi Scan)
+          <input type="text" id="activeTokenInput" readonly placeholder="Token JWT HS256 dari QR..." />
+        </label>
+      </div>
+    </div>
+
+    <!-- Panel 2: Mahasiswa QR Scanner + Geofencing -->
+    <div class="card">
+      <h2>
+        <span>2. Simulasi Scan Mahasiswa & Validasi GPS</span>
+        <span class="badge warn">Rate Limit: 5x/menit</span>
+      </h2>
+      <div class="field-row">
+        <label>Pilih Mahasiswa (NIM)
+          <select id="scanNimSelect">
+            <option value="2025001-0101">2025001-0101 — Rina (Terdaftar)</option>
+            <option value="2025001-0102">2025001-0102 — Budi (Terdaftar)</option>
+            <option value="2025001-0103">2025001-0103 — Citra (Terdaftar)</option>
+            <option value="2025001-0104">2025001-0104 — Doni (Terdaftar)</option>
+            <option value="2025001-0105">2025001-0105 — Eka (Terdaftar)</option>
+            <option value="2025999-9999">2025999-9999 — Mahasiswa Kelas Lain (Ditolak 403)</option>
+          </select>
+        </label>
+      </div>
+      <div class="field-row">
+        <label>Latitude Mahasiswa
+          <input type="number" id="mhsLat" value="-7.2797" step="0.0001" />
+        </label>
+        <label>Longitude Mahasiswa
+          <input type="number" id="mhsLon" value="112.7975" step="0.0001" />
+        </label>
+        <label>Akurasi GPS (m)
+          <input type="number" id="mhsAcc" value="12" min="1" />
+        </label>
+      </div>
+      <div class="toolbar" style="margin-bottom:12px;">
+        <button class="secondary" onclick="setGpsPreset(-7.2797, 112.7975, 10)">Preset: Di Dalam Kelas (0m)</button>
+        <button class="secondary" onclick="setGpsPreset(-7.2900, 112.8100, 15)">Preset: Di Luar Kampus (>1km)</button>
+      </div>
+      <button class="success" style="width:100%;padding:12px;" onclick="submitScan()">
+        Scan QR Presensi Sekarang (POST /api/attendance/scan)
+      </button>
+      <pre id="scanResultBox" style="background:#0f172a;padding:12px;border-radius:8px;margin-top:12px;font-size:0.8rem;white-space:pre-wrap;">Hasil scan akan tampil di sini...</pre>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Panel 3: Rekap Presensi Kelas & Warning <75% -->
+    <div class="card">
+      <h2>
+        <span>3. Attendance Report & Warning (&lt;75%)</span>
+        <a id="excelDownloadBtn" class="btn success" href="/api/attendance/reports/class/1/export.xlsx" target="_blank">Export ke Excel (.xlsx)</a>
+      </h2>
+      <div class="field-row">
+        <label>Kelas ID
+          <input type="number" id="kelasIdInput" value="1" min="1" onchange="loadClassReport()" />
+        </label>
+      </div>
+      <div id="classSummaryText" style="font-size:0.86rem;color:var(--muted);margin-bottom:8px;"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>NIM</th>
+            <th>Nama</th>
+            <th>Hadir</th>
+            <th>Telat</th>
+            <th>Alpha</th>
+            <th>Persentase</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="classReportBody">
+          <tr><td colspan="7">Belum ada data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Panel 4: AI Attendance Insights -->
+    <div class="card">
+      <h2>
+        <span>4. AI Attendance Insights & Early Warning</span>
+        <span id="aiSourceBadge" class="badge ok">deterministic_fallback</span>
+      </h2>
+      <div id="earlyWarningHeadline" style="padding:10px;border-radius:8px;background:rgba(239,68,68,0.15);color:#fca5a5;font-weight:600;margin-bottom:12px;">
+        Memuat analisis AI...
+      </div>
+      <h3 style="font-size:0.92rem;margin:10px 0 4px;">Pola Kehadiran Terdeteksi (Insights):</h3>
+      <ul id="aiInsightsList" class="clean"></ul>
+      <h3 style="font-size:0.92rem;margin:12px 0 4px;">Rekomendasi Tindak Lanjut (Actions):</h3>
+      <ul id="aiActionsList" class="clean"></ul>
+    </div>
+  </div>
+
+  <script>
+    let dosenToken = null;
+    let countdownTimer = null;
+    let remainingSecs = 120;
+
+    function setBanner(msg) {
+      document.getElementById('statusBanner').innerHTML = msg;
+    }
+
+    function setGpsPreset(lat, lon, acc) {
+      document.getElementById('mhsLat').value = lat;
+      document.getElementById('mhsLon').value = lon;
+      document.getElementById('mhsAcc').value = acc;
+    }
+
+    async function loginDosen() {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: 'dosen.pengampu@sevima.ac.id', password: 'dosen123'})
+      });
+      const data = await res.json();
+      if (res.ok) {
+        dosenToken = data.access_token;
+        setBanner('Login Dosen Pengampu berhasil (JWT Bearer token aktif).');
+      } else {
+        setBanner('Gagal login dosen: ' + JSON.stringify(data));
+      }
+    }
+
+    async function seedDemo() {
+      const res = await fetch('/api/attendance/seed-demo', {method: 'POST'});
+      const data = await res.json();
+      if (res.ok) {
+        document.getElementById('scheduleIdInput').value = data.schedule_today_id;
+        document.getElementById('kelasIdInput').value = data.kelas_id;
+        document.getElementById('excelDownloadBtn').href = `/api/attendance/reports/class/${data.kelas_id}/export.xlsx`;
+        setBanner(`<b>${data.detail}</b> (Schedule Hari Ini ID: ${data.schedule_today_id}, Kelas ID: ${data.kelas_id})`);
+        await generateQR();
+        await refreshAll();
+      }
+    }
+
+    async function generateQR() {
+      const scheduleId = document.getElementById('scheduleIdInput').value;
+      const lat = document.getElementById('dosenLat').value;
+      const lon = document.getElementById('dosenLon').value;
+      const rad = document.getElementById('dosenRadius').value;
+      const qs = new URLSearchParams({latitude: lat, longitude: lon, radius_m: rad});
+      const headers = dosenToken ? {'Authorization': `Bearer ${dosenToken}`} : {};
+
+      const infoRes = await fetch(`/api/attendance/qr/${scheduleId}/info?${qs.toString()}`, {headers});
+      const info = await infoRes.json();
+      if (!infoRes.ok) {
+        setBanner('Gagal generate QR: ' + (info.detail || JSON.stringify(info)));
+        return;
+      }
+      document.getElementById('activeTokenInput').value = info.token;
+      document.getElementById('windowBadge').textContent = `Window #${info.qr_window}`;
+      document.getElementById('qrCaption').textContent = `${info.kode_mk}-${info.nama_kelas} (Pertemuan #${info.pertemuan_ke}) • Geofence ${info.radius_m || 100}m`;
+      document.getElementById('qrImage').src = `/api/attendance/qr/${scheduleId}?${qs.toString()}&_t=${Date.now()}`;
+
+      remainingSecs = info.seconds_until_rotation || info.rotate_seconds;
+      if (countdownTimer) clearInterval(countdownTimer);
+      countdownTimer = setInterval(async () => {
+        remainingSecs -= 1;
+        if (remainingSecs <= 0) {
+          await generateQR();
+        } else {
+          document.getElementById('countdownLabel').textContent = `QR berotasi otomatis dalam ${remainingSecs} detik`;
+        }
+      }, 1000);
+    }
+
+    async function submitScan() {
+      const payload = {
+        token: document.getElementById('activeTokenInput').value,
+        nim: document.getElementById('scanNimSelect').value,
+        latitude: parseFloat(document.getElementById('mhsLat').value),
+        longitude: parseFloat(document.getElementById('mhsLon').value),
+        accuracy_m: parseFloat(document.getElementById('mhsAcc').value)
+      };
+      const res = await fetch('/api/attendance/scan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      document.getElementById('scanResultBox').textContent = `HTTP ${res.status}\n` + JSON.stringify(data, null, 2);
+      if (res.ok) {
+        await refreshAll();
+      }
+    }
+
+    async function loadClassReport() {
+      const kelasId = document.getElementById('kelasIdInput').value;
+      document.getElementById('excelDownloadBtn').href = `/api/attendance/reports/class/${kelasId}/export.xlsx`;
+      const res = await fetch(`/api/attendance/reports/class/${kelasId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById('classSummaryText').textContent =
+        `${data.kode_mk} - ${data.nama_mk} (Kelas ${data.nama_kelas}) • Total Sesi: ${data.total_sesi_dibuka} • Rata-rata: ${data.rata_rata_kehadiran}% • Warning <75%: ${data.jumlah_warning_dibawah_75} mhs`;
+      const tbody = document.getElementById('classReportBody');
+      tbody.innerHTML = data.peserta.map(p => `
+        <tr>
+          <td>${p.nim}</td>
+          <td>${p.nama}</td>
+          <td>${p.hadir}</td>
+          <td>${p.terlambat}</td>
+          <td>${p.alpha}</td>
+          <td><b>${p.persentase_kehadiran}%</b></td>
+          <td><span class="badge ${p.warning_dibawah_75 ? 'err' : 'ok'}">${p.warning_dibawah_75 ? 'WARNING <75%' : 'AMAN'}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadAIInsights() {
+      const kelasId = document.getElementById('kelasIdInput').value;
+      const res = await fetch(`/api/attendance/ai-insights?kelas_id=${kelasId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById('aiSourceBadge').textContent = data.ai_source;
+      document.getElementById('earlyWarningHeadline').textContent = data.early_warning;
+      document.getElementById('aiInsightsList').innerHTML = data.insights.map(i => `<li>${i}</li>`).join('');
+      document.getElementById('aiActionsList').innerHTML = data.actions.map(a => `<li><b>${a}</b></li>`).join('');
+    }
+
+    async function refreshAll() {
+      await loadClassReport();
+      await loadAIInsights();
+    }
+  </script>
+</body>
+</html>

@@ -29,16 +29,21 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
   - **Integrasi KRS (`Actor.SYSTEM`) & Ekspor iCalendar (`.ics`):** Perubahan/penghapusan jadwal otomatis memindahkan KRS `SUBMITTED`/`APPROVED` terdampak ke `REVISION` lewat satu pintu `KRS.transition(..., actor=Actor.SYSTEM)` (membiarkan `DRAFT`/`REVISION` utuh) lengkap dengan `KRSLog` dan `Notifikasi` dalam satu transaksi ACID; tersedia juga ekspor `/api/schedules/export.ics` sesuai RFC 5545 (`CRLF`, `UID` stabil, `DTSTART`/`DTEND` `Asia/Jakarta`, `RRULE` `UNTIL` UTC, dan kenaikan `SEQUENCE`).
 - **Modul Nilai & Transkrip Bagian 1 (Minggu 9):**
   - **Single Source of Truth (`krs_detail.nilai`), `skala_nilai`, & Migrasi (`d4e5f6grd010`):** Nilai per mahasiswa per kelas disimpan di `krs_detail.nilai` dengan *Foreign Key* ke `skala_nilai.huruf` (`A=4.00, B=3.00, C=2.00, D=1.00, E=0.00` bertipe `NUMERIC(3,2)` / `Decimal` dan kolom `lulus BOOLEAN` berbasis data). Ambiguitas dokumen tugas (`>= D (2.0)`) didokumentasikan pada [`repo-structure/docs/stakeholder-questions-minggu-9.md`](repo-structure/docs/stakeholder-questions-minggu-9.md) dengan asumsi sementara minimal `C` lulus (`A/B/C = True`, `D/E = False`) yang juga dibaca oleh `PrerequisiteValidator`.
-  - **Penjaga Input Nilai 2 Lapis (`GradeService` & `PresensiPort` DIP Stub):** Validasi endpoint idempoten `PUT /api/kelas/{kelas_id}/nilai/{nim}` via `NilaiIn` (`^[A-E]$` $\rightarrow$ `422`), autentikasi JWT `get_current_dosen`, penjaga pertama `is_pengampu(kelas_id, dosen_id)` via tabel `jadwal` (`403 Forbidden`), penguncian baris `KRSDetail` dengan `with_for_update()` (`404`), dan penjaga kedua presensi $\ge 75\%$ melalui protokol `PresensiPort` (`StubPresensiPort` sementara hingga Modul Presensi Minggu 12, `< 75%` $\rightarrow$ `422`).
+  - **Penjaga Input Nilai 2 Lapis (`GradeService` & `DatabasePresensiPort` DIP):** Validasi endpoint idempoten `PUT /api/kelas/{kelas_id}/nilai/{nim}` via `NilaiIn` (`^[A-E]$` $\rightarrow$ `422`), autentikasi JWT `get_current_dosen`, penjaga pertama `is_pengampu(kelas_id, dosen_id)` via tabel `jadwal` (`403 Forbidden`), penguncian baris `KRSDetail` dengan `with_for_update()` (`404`), dan penjaga kedua presensi $\ge 75\%$ melalui protokol `PresensiPort` (terhubung ke `DatabasePresensiPort` Modul Presensi Minggu 12 dengan fallback `StubPresensiPort`, `< 75%` $\rightarrow$ `422`).
   - **Audit Trail `grade_history` (Append-Only) & SQL View `riwayat_nilai`:** Perubahan nilai (termasuk input pertama dengan `nilai_lama = NULL`) beserta stempel waktu UTC dan `alasan` wajib (saat ubah nilai) ditulis dalam **satu transaksi atomik** bersama update `krs_detail.nilai`, lalu disajikan lewat SQL View `riwayat_nilai` (`GET /api/mahasiswa/{nim}/riwayat-nilai`).
   - **Kalkulator IPS & IPK Presisi `Decimal` (*Functional Core, Imperative Shell*):** Fungsi murni `rata`, `hitung_ips`, dan `hitung_ipk` memakai `Decimal` dengan pembulatan `ROUND_HALF_UP` (`0.01`) sekali di akhir (`3.125 -> 3.13`, total SKS nol $\rightarrow$ `0.00`, mata kuliah ulang memilih bobot terbaik per `kode_mk` sebelum menyaring `lulus`), didukung `NilaiRepo` & `GPACalculator` (*compute-on-read* dengan respons string 2 desimal) serta pembanding SQL CTE `calculate_ipk_sql` (`ROW_NUMBER()` + `NULLIF`), dan form web dosen `/dashboard/grades`.
-- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`e5f6g7fin011 (head)`), dan skrip inisialisasi database.
+- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`f6g7h8att012 (head)`), dan skrip inisialisasi database.
 - **Modul Keuangan / SPP (Minggu 11):**
   - **Payment Schema & Migrasi (`e5f6g7fin011`):** Tabel `payment_method` (`VA_BCA`, `VA_BNI`, `QRIS`, `BANK_TRANSFER`, `MANUAL_CASH`), `billing` (`unpaid`, `partial`, `paid`, `overdue`, `UniqueConstraint(nim, semester)`), `payment` (`transaction_id` unik), serta kolom `program_studi.biaya_spp` bertipe `NUMERIC(14, 2)` / `Decimal` (ROUND_HALF_UP). Ambiguitas spesifikasi dicatat di [`repo-structure/docs/stakeholder-questions-minggu-11.md`](repo-structure/docs/stakeholder-questions-minggu-11.md).
   - **Billing Service & Pemblokiran KRS (`BillingGuardPort` & `TunggakanValidator`):** `generate_billing()` untuk mahasiswa aktif (Teknik Rp 5.000.000, Ekonomi Rp 4.000.000, jatuh tempo `+14` hari, idempoten), `process_payment()` atomik dengan `.with_for_update()` dan logika **cicilan kumulatif** (`amount_paid + amount` vs `amount + late_fee`), perhitungan denda terkonfigurasi (`2%` per 30 hari, cap `10%`, `grace_days=0`), serta **blokir KRS** (`403 KRSBillingBlockedError`) di `add_course`, `remove_course`, dan `submit_krs` selama mahasiswa memiliki tagihan `unpaid`/`partial`/`overdue` (terbuka otomatis saat `paid`).
   - **Payment Webhook Simulation & Receipt Email:** Endpoint `POST /api/finance/webhook` dengan verifikasi `HMAC-SHA256` (`X-Webhook-Signature`), idempotensi `transaction_id`, penanganan status non-sukses (`failed`/`pending`), dan simulasi kwitansi email via `LogChannel("EMAIL")` + tabel `notifikasi`.
   - **APScheduler Cron Jobs, Dashboard Keuangan, & AI Financial Insights:** `FinanceSchedulerManager` (`generate_semester_billing` & `daily_overdue_and_reminder`) yang dikelola via `lifespan` FastAPI, endpoint agregasi real-time `/api/finance/dashboard` & UI `/dashboard/finance` (ringkasan mahasiswa, *collection rate* per prodi, grafik pembayaran bulanan), serta `/api/finance/ai-report` dan `/api/finance/ai-report/csv` dengan agregasi deterministik (`total_revenue_bulan_ini`, *collection rate*, top 10 tunggakan, rekomendasi reminder `Z` mahasiswa tunggakan `>2` bulan) + narasi AI tervalidasi Pydantic & *fallback* deterministik.
-- **Automated Testing (180 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine (`40`), *Property-Based Testing* KRS (`48`: **2×1000 contoh acak** SKS & bentrok, **42 transisi ilegal** dari 48 kombinasi, **200 contoh CSP**), integrasi PMB (`8`), API KRS (`6`), Modul Jadwal (`24`: 7 kasus bug AI, 2×300 properti & differential test `Sort & Sweep` vs `Naive`, 4 tes Minggu 8, RBAC, & `.ics`), Modul Nilai Minggu 9 (`23` di `test_grade.py`), serta Modul Keuangan Minggu 11 (`31` di `test_finance.py`: unit test terparameterisasi denda/status/tarif/HMAC, **2×200 properti `Hypothesis`**, integrasi `BillingService`, webhook HMAC + idempotensi, blokir/buka blokir KRS, `APScheduler`, AI Insights CSV/DB, RBAC dashboard, & UI `/dashboard/finance`).
+- **Modul Presensi QR Code (Minggu 12):**
+  - **Skema Presensi (`f6g7h8att012`) & Rotasi QR Otomatis Anti-Replay:** Tabel `attendance_session` (`secret` 128-bit per sesi, koordinat geofence `latitude`/`longitude`/`radius_m`, `UniqueConstraint(kelas_id, tanggal, jam_mulai)`) dan `attendance_record` (`UniqueConstraint(session_id, nim)`, waktu scan UTC, `qr_window`, jarak GPS). Fungsi `generate_attendance_qr()` & endpoint `GET /api/attendance/qr/{schedule_id}` (serta alias `/attendance/qr/{schedule_id}`) memutar token JWT HS256 otomatis setiap `120` detik (`qr_nonce` HMAC-SHA256 + `grace_windows=1`) selama sesi terbuka (`30` menit), menyelesaikan kontradiksi waktu QR 15 menit vs status terlambat 30 menit ([`repo-structure/docs/stakeholder-questions-minggu-12.md`](repo-structure/docs/stakeholder-questions-minggu-12.md)).
+  - **Validasi Scan 6 Lapis, Geofencing Haversine, & Rate Limiting (`POST /api/attendance/scan`):** Menegakkan *sliding-window rate limiter* (`ScanRateLimiter`, `5` scan/menit per NIM $\rightarrow$ `429`), verifikasi JWT & rotasi window (`400`/`410`), anti-spoofing NIM saat menggunakan JWT mahasiswa (`403`), validasi jadwal kuliah hari ini di zona waktu `Asia/Jakarta` (`422`), validasi enrollment `KRSStatus.APPROVED` (`403`), anti-duplikat scan (`409`), validasi geolokasi *Haversine* ($\le 100\text{ m}$ default, akurasi GPS $\le 150\text{ m}$ $\rightarrow$ `403`/`422`), dan kalkulasi status `hadir` ($\le 15$ menit) vs `terlambat` ($15\text{–}30$ menit).
+  - **Attendance Report (`< 75%` Warning), Ekspor Excel (`.xlsx`), & Integrasi `DatabasePresensiPort`:** Rekap kehadiran per mahasiswa (`/api/attendance/reports/student/{nim}`) dan per kelas (`/api/attendance/reports/class/{kelas_id}`), ekspor Excel 3 sheet (`/api/attendance/reports/class/{kelas_id}/export.xlsx` menggunakan `openpyxl`), serta penyuntikan `DatabasePresensiPort` ke `GradeService` agar penjaga input nilai `< 75%` membaca data presensi QR nyata.
+  - **AI Attendance Insights & Dashboard Presensi (`/dashboard/attendance`):** Endpoint `POST /api/attendance/ai-insights` (analisis JSON array `attendance_records`) dan `GET /api/attendance/ai-insights` (analisis langsung dari DB) mendeteksi mahasiswa berisiko `< 75%` (*early warning*), pola absen hari/waktu per mahasiswa (*"Mahasiswa X sering absent Senin pagi -> hubungi untuk konseling"*), dan kelas dengan tingkat absen tinggi (*"Kelas Y di jam 07:00 absen rate 40% -> pertimbangkan reschedule"*) secara deterministik + pengayaan opsional `LLMClient`.
+- **Automated Testing (206 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine (`40`), *Property-Based Testing* KRS (`48`: **2×1000 contoh acak** SKS & bentrok, **42 transisi ilegal** dari 48 kombinasi, **200 contoh CSP**), integrasi PMB (`8`), API KRS (`6`), Modul Jadwal (`24`: 7 kasus bug AI, 2×300 properti & differential test `Sort & Sweep` vs `Naive`, 4 tes Minggu 8, RBAC, & `.ics`), Modul Nilai Minggu 9 (`23` di `test_grade.py`), Modul Keuangan Minggu 11 (`31` di `test_finance.py`), serta Modul Presensi Minggu 12 (`26` di `test_attendance.py`: unit test terparameterisasi waktu/rotasi/persentase, **2×200 properti `Hypothesis`** persentase & *Haversine*, siklus rotasi QR anti-replay, geofencing GPS, *rate limiter* `429`, integrasi `DatabasePresensiPort` ke `GradeService`, ekspor Excel `.xlsx`, AI Attendance Analyzer + guardrail `FakeLLMClient`, & UI `/dashboard/attendance`).
 
 ## Ringkasan Endpoint API, State Machine KRS, & Alur Penjadwalan
 
@@ -91,9 +96,20 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 | **Finance** | `GET /api/finance/ai-report` & `POST .../csv` | Query `as_of` / body `csv_data` | `200`, `401`, `403`, `422` | Laporan AI Financial Insights JSON dari DB atau CSV (RBAC Admin) |
 | **Finance** | `GET /api/finance/scheduler/jobs` & `.../receipts` | — | `200`, `401`, `403` | Status cron job `APScheduler` & log simulasi receipt email (RBAC Admin) |
 | **Finance** | `POST /api/finance/seed-demo` | Query `semester` | `200`, `401`, `403` | Muat skenario demo tagihan Teknik/Ekonomi, cicilan, & `overdue` (RBAC Admin) |
+| **Attendance** | `GET /api/attendance/qr/{schedule_id}` | Query `latitude`, `longitude`, `radius_m` (opsional) | `200`, `403`, `404`, `410` | Generate gambar QR PNG berotasi otomatis (`120s`, `HMAC-SHA256`) + alias `/attendance/qr/{id}` |
+| **Attendance** | `GET /api/attendance/qr/{schedule_id}/info` | Query `latitude`, `longitude`, `radius_m` (opsional) | `200`, `403`, `404` | Metadata JSON sesi presensi, token QR aktif, `qr_window`, & *countdown* rotasi |
+| **Attendance** | `POST /api/attendance/sessions` | `schedule_id`, `tanggal`, `pertemuan_ke`, `latitude`, `longitude`, `radius_m` | `201`, `403`, `404`, `409`, `422` | Buka sesi presensi baru untuk pertemuan kuliah tertentu |
+| **Attendance** | `POST /api/attendance/sessions/{id}/close` | — | `200`, `403`, `404` | Tutup sesi presensi secara eksplisit |
+| **Attendance** | `POST /api/attendance/scan` | `token`, `nim` (opsional bila pakai JWT Mhs), `latitude`, `longitude`, `accuracy_m` | `200`, `400`, `403`, `409`, `410`, `422`, `429` | Scan QR mahasiswa (validasi JWT/rotasi, jadwal, KRS, duplikat, GPS *Haversine*, *rate limit*) + alias `/attendance/scan` |
+| **Attendance** | `GET /api/attendance/reports/student/{nim}` | — | `200`, `404` | Rekap persentase kehadiran per MK untuk seorang mahasiswa |
+| **Attendance** | `GET /api/attendance/reports/class/{kelas_id}` | — | `200`, `404` | Rekap presensi kelas & daftar mahasiswa warning `< 75%` |
+| **Attendance** | `GET /api/attendance/reports/class/{kelas_id}/export.xlsx` | — | `200`, `404` | Ekspor laporan presensi kelas ke Excel (`.xlsx` 3 sheet) untuk dosen |
+| **Attendance** | `GET / POST /api/attendance/ai-insights` | Query `kelas_id`, `semester` / body `attendance_records[]` | `200`, `422` | Analisis pola kehadiran, *early warning* `< 75%`, & rekomendasi (`insights` + `actions`) |
+| **Attendance** | `POST /api/attendance/seed-demo` | — | `200` | Muat skenario demo Kelas `IF301-A`, 5 mahasiswa, 4 sesi historis Senin 07:00, & jadwal aktif hari ini |
 | **UI** | `GET /dashboard/conflicts` | — | `200` | Halaman **Conflict Resolver UI** (dengan bilah login Admin JWT) |
 | **UI** | `GET /dashboard/grades` | — | `200` | Halaman **Form Input Nilai Dosen & Audit Trail** (dengan bilah login Dosen JWT) |
 | **UI** | `GET /dashboard/finance` | — | `200` | Halaman **Dashboard Keuangan (SPP), Webhook Simulator, & AI Insights** |
+| **UI** | `GET /dashboard/attendance` | — | `200` | Halaman **Dashboard Presensi QR Berotasi, Scanner GPS, Rekap Excel, & AI Insights** |
 
 ### Alur Transisi Sah State Machine KRS
 
@@ -125,6 +141,12 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 2. **Pemrosesan Pembayaran Kumulatif, Webhook HMAC, & Receipt:** `process_payment()` mengunci baris `Billing` (`.with_for_update()`), mengevaluasi **total terbayar kumulatif** (`amount_paid + amount` vs `amount + late_fee`), mencatat `PaymentTransaction` (`transaction_id` unik) dan `Notifikasi` dalam satu transaksi ACID, lalu mengirim simulasi receipt email via `LogChannel("EMAIL")`. Endpoint `POST /api/finance/webhook` memverifikasi signature `HMAC-SHA256` sebelum memproses transaksi secara idempoten.
 3. **Blokir KRS & AI Financial Insights:** `KRSManager` (via `BillingGuardPort`) menolak `add_course`, `remove_course`, dan `submit_krs` dengan HTTP `403` (`KRSBillingBlockedError`) bila mahasiswa memiliki tagihan `unpaid`/`partial`/`overdue` dan langsung membuka akses begitu status menjadi `paid`. Endpoint `/api/finance/ai-report` dan `/api/finance/ai-report/csv` menghitung angka revenue, *collection rate*, top 10 tunggakan, dan rekomendasi tunggakan `>2` bulan secara deterministik sebelum meminta narasi teranonimasi dari `LLMClient`.
 
+### Alur Modul Presensi QR Code (Minggu 12)
+
+1. **Sesi Presensi & Rotasi QR Otomatis (`GET /api/attendance/qr/{schedule_id}`):** Dosen membuka/meminta QR untuk jadwal kuliah hari ini (opsional menyertakan koordinat ruang kuliah `latitude`, `longitude`, `radius_m`). Sesi dibuka selama `30` menit, sedangkan token JWT HS256 berotasi otomatis setiap `120` detik (`window_index` + `qr_nonce` HMAC-SHA256 dengan `grace_windows=1`) agar foto QR lama langsung kedaluwarsa (`410 Gone`).
+2. **Validasi Scan 6 Lapis & Geofencing Haversine (`POST /api/attendance/scan`):** Memeriksa *sliding-window rate limiter* (`5` scan/menit per NIM $\rightarrow$ `429`), mendekode JWT & rotasi window, mencegah spoofing NIM jika mahasiswa login, memastikan jadwal berlangsung hari ini (`Asia/Jakarta`), memverifikasi mahasiswa terdaftar di kelas pada KRS `APPROVED` (`403`), menolak scan duplikat (`409`), memvalidasi jarak GPS *Haversine* $\le 100\text{ m}$ & akurasi $\le 150\text{ m}$ (`403`/`422`), lalu mencatat status `hadir` ($\le 15$ menit) atau `terlambat` ($15\text{–}30$ menit).
+3. **Rekap, Ekspor Excel, Integrasi `DatabasePresensiPort`, & AI Analyzer:** `DatabasePresensiPort` langsung menyuplai persentase kehadiran nyata ke `GradeService` (menolak input nilai `< 75%` dengan `422 PresensiKurangError`). Dosen dapat mengunduh rekap `.xlsx` 3 sheet (`/api/attendance/reports/class/{kelas_id}/export.xlsx`) dan menjalankan `AI Attendance Analyzer` (`/api/attendance/ai-insights`) untuk mendeteksi pola absen hari/jam serta *early warning* mahasiswa berisiko `< 75%`.
+
 ## Struktur Proyek
 
 ```text
@@ -141,9 +163,10 @@ repo-structure/
 ├── docs/
 │   ├── ADR-architecture-decisions.md  # Keputusan Arsitektur Sistem (ADR-001)
 │   ├── stakeholder-questions-minggu-9.md   # Klarifikasi kontradiksi spesifikasi >= D (2.0) ke stakeholder
-│   └── stakeholder-questions-minggu-11.md  # Klarifikasi celah & asumsi konfigurasi Modul Keuangan (Minggu 11)
+│   ├── stakeholder-questions-minggu-11.md  # Klarifikasi celah & asumsi konfigurasi Modul Keuangan (Minggu 11)
+│   └── stakeholder-questions-minggu-12.md  # Klarifikasi kontradiksi waktu QR & geofencing Modul Presensi (Minggu 12)
 └── prompts/
-    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML & arsitektur (Log 01–17)
+    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML & arsitektur (Log 01–18)
 
 backend/
 ├── alembic/                     # Migrasi database Alembic
@@ -157,25 +180,31 @@ backend/
 │       ├── b2c3d4sch008_refactor_domain_jadwal.py
 │       ├── c3d4e5sch009_outbox_dan_sequence_jadwal.py
 │       ├── d4e5f6grd010_skala_nilai_grade_history.py
-│       └── e5f6g7fin011_tabel_keuangan_spp.py
+│       ├── e5f6g7fin011_tabel_keuangan_spp.py
+│       └── f6g7h8att012_tabel_presensi_qr.py
 ├── alembic.ini                  # Konfigurasi Alembic
 ├── app/
-│   ├── core/                    # Konfigurasi (DB, Security JWT Admin & get_current_dosen, env AI & Keuangan)
+│   ├── core/                    # Konfigurasi (DB, Security JWT Admin/Dosen/Mahasiswa, env AI, Keuangan, & Presensi)
 │   ├── models/                  # Model SQLAlchemy 2.0 ORM
+│   │   ├── attendance.py        # AttendanceSession, AttendanceRecord, AttendanceStatus, & AttendanceError (Minggu 12)
 │   │   ├── finance.py           # Billing, PaymentTransaction, PaymentMethod, BillingStatus, & FinanceError (Minggu 11)
 │   │   ├── grade.py             # SkalaNilai, GradeHistory, RIWAYAT_NILAI_VIEW_SQL, GradeError, & Grade legacy
 │   │   ├── schedule.py          # Model Ruangan, Dosen, Kelas, Jadwal (sequence), Outbox, & ScheduleError (Minggu 7–8)
 │   │   └── ...                  # Model PMB, KRS (KRSBillingBlockedError & FK skala_nilai), User, Course, Enrollment, Payment
 │   ├── repositories/            # Repository Pattern (IPMBRepository & SQLite)
 │   ├── routers/                 # Endpoint FastAPI
-│   │   ├── auth.py              # Endpoint Login JWT Admin & Dosen (/api/auth/login)
+│   │   ├── attendance.py        # Endpoint QR Presensi Berotasi, Scan GPS, Laporan Excel, & AI Insights (/api/attendance)
+│   │   ├── auth.py              # Endpoint Login JWT Admin, Dosen, & Mahasiswa (/api/auth/login)
 │   │   ├── finance.py           # Endpoint Tagihan SPP, Webhook HMAC, Dashboard, Scheduler, & AI Report (/api/finance)
 │   │   ├── grade.py             # Endpoint Input Nilai, IPS/IPK, Riwayat, & Seed Demo (/api/kelas/*/nilai/*, /api/mahasiswa/*)
 │   │   ├── pmb.py               # Endpoint PMB (/api/pmb)
 │   │   ├── krs.py               # Endpoint KRS & CSP Recommender (/api/krs)
 │   │   └── schedule.py          # Endpoint Jadwal, Outbox, Conflict, AI, .ics, & Logs (/api/schedules)
-│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py, grade.py, & finance.py)
+│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py, grade.py, finance.py, & attendance.py)
 │   ├── services/                # Business Logic Layer
+│   │   ├── attendance_ai_analyzer.py # AI Attendance Analyzer JSON (pola absen hari/jam, early warning <75%, & guardrail LLM)
+│   │   ├── attendance_rules.py  # Pure core presensi (status hadir/terlambat, rotasi window HMAC, Haversine, & persentase Decimal)
+│   │   ├── attendance_service.py # AttendanceService, ScanRateLimiter, generate_attendance_qr, DatabasePresensiPort, & Excel export
 │   │   ├── billing_service.py   # BillingService, BillingGuardPort, Webhook HMAC, Email Receipt, & Dashboard (Minggu 11)
 │   │   ├── calendar_exporter.py # Ekspor iCalendar RFC 5545 (.ics) dengan CRLF, UID, RRULE UTC, & SEQUENCE
 │   │   ├── conflict_detector.py # Detektor bentrok Naive & Grouping + Sort & Sweep + cek_kapasitas
@@ -189,11 +218,13 @@ backend/
 │   │   ├── scheduling_service.py   # Layanan Penjadwalan (locking pesimis, SQL conflict, Outbox & KRS ACID)
 │   │   └── ...                  # pmb_service, krs_manager, krs_validator (TunggakanValidator), krs_recommender
 │   ├── static/                  # Dashboard & Form Web UI
+│   │   ├── attendance_dashboard.html # Dashboard Presensi QR Berotasi, Scanner GPS, Rekap Excel, & AI Insights (/dashboard/attendance)
 │   │   ├── conflict_resolver.html
 │   │   ├── finance_dashboard.html # Dashboard Keuangan SPP, Simulator Webhook, & AI Insights (/dashboard/finance)
 │   │   └── grade_input.html     # Form web input nilai dosen pengampu & audit trail (/dashboard/grades)
 │   └── main.py                  # Entry Point FastAPI, Lifespan Scheduler, Exception Handler, & Dashboard UI
 ├── tests/
+│   ├── test_attendance.py       # Unit, 2 Properti Hypothesis, Rotasi QR, Geofencing GPS, Rate Limit, Excel, & AI Insights (Minggu 12)
 │   ├── test_finance.py          # Unit, 2 Properti Hypothesis, Webhook HMAC, Blokir KRS, APScheduler, AI Report, & UI (Minggu 11)
 │   ├── test_grade.py            # Unit (11 IPK + 3 IPS + tukar skala), 3 Properti Hypothesis, Integration, & API/UI (Minggu 9)
 │   ├── test_krs_api.py          # API Integration Testing KRS (TestClient)
@@ -203,7 +234,7 @@ backend/
 ├── test_models_and_schemas.py   # Unit & Integration Test Model, Validator, & State Machine KRS
 ├── test_pmb.py                  # API Integration Testing PMB (Pytest)
 ├── requirements.txt             # Daftar Dependensi Python
-└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6–11)
+└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6–12)
 ```
 
 ## Teknologi & Tools
@@ -233,7 +264,7 @@ backend/
    ```
 5. **Menjalankan Seluruh Test Suite (Lintas OS — Windows PowerShell & Linux/macOS):**
    ```bash
-   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py backend/tests/test_grade.py backend/tests/test_finance.py -v
+   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py backend/tests/test_grade.py backend/tests/test_finance.py backend/tests/test_attendance.py -v
    ```
 6. **Menjalankan Server Backend (dari folder `backend/` agar terhubung ke `backend/pmb.db` hasil migrasi Alembic):**
    ```bash
@@ -243,6 +274,7 @@ backend/
    * Akses **Conflict Resolver Admin UI** di: http://127.0.0.1:8000/dashboard/conflicts (klik **Login Admin** dengan akun demo `admin.akademik@sevima.ac.id` / `admin123`, lalu klik **Muat Data Demo Bentrok**).
    * Akses **Form Input Nilai Dosen & Audit Trail** di: http://127.0.0.1:8000/dashboard/grades (klik **Muat Data Demo (Rina 90% & Budi 70%)**, lalu klik **Login Dosen Pengampu** dengan akun demo `dosen.pengampu@sevima.ac.id` / `dosen123`).
    * Akses **Dashboard Keuangan (SPP)** di: http://127.0.0.1:8000/dashboard/finance (login Admin `admin.akademik@sevima.ac.id` / `admin123`, lalu klik **Muat Data Demo** untuk menguji tagihan Teknik/Ekonomi, blokir KRS, simulasi webhook + cURL, serta AI Financial Insights).
+   * Akses **Dashboard Presensi QR Code & AI Insights (Minggu 12)** di: http://127.0.0.1:8000/dashboard/attendance (klik **1. Muat Data Demo Presensi** untuk menampilkan QR berotasi otomatis 120 detik, menguji simulasi scan mahasiswa di dalam/luar radius GPS *Haversine*, mengunduh rekap `.xlsx`, dan melihat *early warning* AI Attendance Insights).
    * Unduh jadwal kuliah dalam format **iCalendar (.ics)** di: http://127.0.0.1:8000/api/schedules/export.ics (opsional `?semester=20251&nim=2025001-0001`).
    * **Simulasi Uji Webhook Payment Gateway (`curl`):** hasilkan payload & signature valid melalui `POST /api/finance/webhook/sign` (atau tombol *Simulasi Webhook* di `/dashboard/finance`), lalu kirim ke:
      ```bash

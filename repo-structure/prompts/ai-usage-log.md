@@ -752,3 +752,27 @@ Mendokumentasikan hasil analisis spesifikasi **Minggu 11: Modul Keuangan (SPP)**
 - **Catatan**: Pengaturan denda default (`2%`/30 hari, cap `10%`, grace `0` hari) dan tarif default SPP (`Teknik 5jt`, `Ekonomi 4jt`) dapat langsung disesuaikan lewat `.env` atau kolom `program_studi.biaya_spp` setelah konfirmasi stakeholder diterima.
 
 ---
+
+## Log 18 — Klarifikasi Celah Spesifikasi & Pembaruan ADR Modul Presensi QR Code (Minggu 12)
+
+### Tujuan
+Mendokumentasikan analisis kontradiksi & celah spesifikasi **Minggu 12: Modul Presensi (QR Code)** ke [`repo-structure/docs/stakeholder-questions-minggu-12.md`](../docs/stakeholder-questions-minggu-12.md), memperbarui **ADR-001 (`3.29–3.32` & *trade-off* `23–26`)**, serta menyinkronkan catatan penggunaan AI & OPAR pada branch `tugas-12`.
+
+### Perintah (Prompt)
+> "Analisis spesifikasi Minggu 12 (Modul Presensi QR Code), dokumentasikan kontradiksi waktu QR 15 menit vs terlambat 30 menit serta celah anti-replay/geofencing ke `repo-structure/docs/stakeholder-questions-minggu-12.md`, dan perbarui `repo-structure/docs/ADR-architecture-decisions.md` mencakup:
+> 1. Skema `attendance_session` & `attendance_record` (`f6g7h8att012`) serta rotasi QR otomatis berbasis window (`HMAC-SHA256` nonce).
+> 2. Enam lapis validasi `scan_qr`, geofencing *Haversine* + batas akurasi GPS, dan *rate limiting* sliding-window.
+> 3. Penyelesaian Dependency Inversion `DatabasePresensiPort` ke `GradeService` (Minggu 9 -> Minggu 12).
+> 4. Laporan presensi (`< 75%` warning), ekspor Excel 3 sheet (`openpyxl`), dan guardrail deterministik pada AI Attendance Analyzer."
+
+### Hasil
+- Terbentuknya [`repo-structure/docs/stakeholder-questions-minggu-12.md`](../docs/stakeholder-questions-minggu-12.md) yang merinci 4 kontradiksi/celah spesifikasi (tabrakan QR 15 menit vs terlambat 30 menit, klaim anti-replay tanpa nonce sesi, potensi spoofing `nim` & `datetime.utcnow()` usang, serta parameter geofence & pembagi persentase) beserta 3 pertanyaan konfirmasi untuk stakeholder akademik.
+- Pembaruan [`repo-structure/docs/ADR-architecture-decisions.md`](../docs/ADR-architecture-decisions.md) dengan sub-bab **3.29–3.32** serta *trade-off* **23–26**.
+- Pembaruan [`backend/ai-usage-log.md`](../../backend/ai-usage-log.md) (**Log 17** beserta OPAR & jawaban viva), [`.github/PULL_REQUEST_TEMPLATE.md`](../../.github/PULL_REQUEST_TEMPLATE.md), dan [`README.md`](../../README.md).
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Kontradiksi aturan waktu pada dokumen brief diselesaikan secara elegan melalui pemisahan durasi sesi (30 menit) dan rotasi QR otomatis (120 detik), sambil menyelesaikan kontrak `PresensiPort` Minggu 9 tanpa regresi pada test suite lama.
+- **Catatan**: Radius geofence (`100m`), batas akurasi GPS (`150m`), interval rotasi QR (`120s`), dan kuota *rate limit* (`5`/menit) seluruhnya dapat disesuaikan melalui variabel environment pada `Settings`.
+
+---
+

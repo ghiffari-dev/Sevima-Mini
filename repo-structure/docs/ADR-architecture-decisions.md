@@ -209,6 +209,37 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
   - Seluruh kalkulasi angka laporan (`total_revenue_bulan_ini`, `collection_rate_percent`, `top_10_tunggakan`, dan `mahasiswa_tunggakan_lebih_2_bulan` `Z` dengan batas `> 60` hari) dihitung secara deterministik dari DB maupun CSV (`nim, jumlah, tanggal, status`) di `finance_calculator.py`.
   - `LLMClient` hanya menerima metrik agregat teranonimasi (tanpa NIM/PII) untuk menyusun `ringkasan_eksekutif` dan `saran_tindak_lanjut` tervalidasi Pydantic (`AINarrativeOutput`), dengan *deterministic fallback* apabila API key LLM tidak tersedia atau keluaran tidak valid.
 
+### 3.29 Skema Presensi QR (`attendance_session` & `attendance_record`) & Rotasi QR Otomatis Anti-Replay (Minggu 12)
+- **Resolusi Kontradiksi Waktu QR 15 Menit vs Status Terlambat 15–30 Menit:**
+  - Dokumen tugas mencantumkan *"QR valid hanya 15 menit"* di Deliverable 1, tetapi Step 2 menetapkan *"Hadir jika scan dalam 15 menit pertama; Terlambat jika scan setelah 15 menit (max 30 menit)"*. Jika token QR mati total pada menit ke-15, status `terlambat` tidak akan pernah tercapai.
+  - Solusi arsitektural (didokumentasikan juga di `repo-structure/docs/stakeholder-questions-minggu-12.md`): memisahkan **siklus hidup sesi pertemuan** (`AttendanceSession`, terbuka 30 menit dari `opened_at` hingga `closes_at`) dari **siklus hidup jendela QR** yang **berotasi otomatis setiap 120 detik** (`ATTENDANCE_QR_ROTATE_SECONDS=120`) dengan toleransi `grace_windows=1`.
+- **Nonce HMAC-SHA256 per Sesi & Jendela (`qr_nonce`):**
+  - Setiap `AttendanceSession` menyimpan `secret` acak 128-bit (`secrets.token_hex(16)`). Token JWT HS256 yang dirender ke gambar PNG (`GET /api/attendance/qr/{schedule_id}`) memuat klaim `sid` (`session_id`), `win` (`window_index`), dan `jti = HMAC-SHA256(secret, f"{sid}:{win}")[:32]`.
+  - Saat mahasiswa memindai QR (`POST /api/attendance/scan`), sistem memverifikasi signature JWT, kecocokan `jti` dengan `session.secret`, serta memastikan `0 <= current_window - token_window <= grace_windows`. Foto QR lama yang dibagikan ke luar kelas otomatis kedaluwarsa (`410 QRExpiredError`) begitu jendela rotasi berganti.
+
+### 3.30 Validasi 6 Lapis pada `scan_qr`, Geofencing Haversine, & Rate Limiting Sliding-Window
+- **Enam Lapis Penjaga Presensi (`AttendanceService.scan_qr`):**
+  1. **Rate Limiting (`ScanRateLimiter`):** Membatasi maksimal `5` percobaan scan per `60` detik per NIM (`429 RateLimitExceededError` + header `Retry-After`) untuk mencegah brute-force / spam scan.
+  2. **Autentikasi Token & Anti-Spoofing NIM:** Mendekode JWT HS256 (`400 QRTokenInvalidError` / `410 QRExpiredError`). Jika mahasiswa mengirim JWT login (`role == "mahasiswa"`), `nim` diambil dari klaim token dan percobaan mengirim `nim` mahasiswa lain ditolak (`403 AttendanceForbiddenError`).
+  3. **Validasi Hari Jadwal & Sesi Aktif:** Memastikan `jadwal.hari == iso_hari(local_date(now, ZoneInfo("Asia/Jakarta")))` (`422 OutsideAttendanceWindowError`) serta sesi berstatus `open` dan berada dalam jendela rotasi QR yang sah.
+  4. **Validasi Enrollment KRS (`_is_student_enrolled`):** Mahasiswa wajib terdaftar pada kelas tersebut di dalam KRS berstatus `APPROVED` (`403 NotEnrolledError`), mencegah mahasiswa memindai QR kelas lain.
+  5. **Anti-Duplikat (`UniqueConstraint("session_id", "nim")`):** Menolak scan ganda pada pertemuan yang sama di level service maupun constraint DB (`409 DuplicateAttendanceError`).
+  6. **Validasi Geolokasi (*Haversine*) & Kalkulasi Status Waktu:** Bila sesi mengaktifkan geofence (`latitude`, `longitude`, `radius_m` default `100m`), mahasiswa wajib mengirim koordinat GPS yang valid (`422 GeolocationRequiredError`), memiliki akurasi sinyal $\le 150\text{ m}$, dan berjarak *Haversine* $\le \text{radius\_m}$ (`403 GeolocationError`). Status ditentukan secara murni oleh `determine_attendance_status()` ($\le 15$ menit $\rightarrow$ `hadir`, $15\text{–}30$ menit $\rightarrow$ `terlambat`, $> 30$ menit $\rightarrow$ `422`).
+
+### 3.31 Integrasi Nyata `DatabasePresensiPort` ke `GradeService` (Penyelesaian DIP Minggu 9 -> Minggu 12)
+- **Penggantian `StubPresensiPort` Tanpa Mengubah `GradeService`:**
+  - Pada Minggu ke-9, `GradeService` dirancang bergantung pada protokol `PresensiPort` (`persentase(nim, kelas_id) -> Decimal`). Pada Minggu ke-12, `DatabasePresensiPort` diimplementasikan untuk menghitung `(hadir + terlambat) / total_sesi_kelas * 100` (`ROUND_HALF_UP` 2 desimal) langsung dari tabel `attendance_session` dan `attendance_record` (dengan fallback ke `default_presensi_stub` bila kelas belum memiliki sesi presensi di DB).
+  - Dependency `get_presensi_port` di `backend/app/routers/grade.py` langsung menyuntikkan `DatabasePresensiPort`, sehingga syarat presensi $\ge 75\%$ saat input nilai dosen (`PUT /api/kelas/{kelas_id}/nilai/{nim}`) kini otomatis ditegakkan dari data scan QR nyata tanpa memodifikasi satu baris pun di `GradeService`.
+
+### 3.32 Laporan Presensi (`< 75%` Warning), Ekspor Excel (`openpyxl`), & AI Attendance Analyzer
+- **Laporan Presensi & Ekspor `.xlsx` Multi-Sheet:**
+  - `get_student_report(nim)` dan `get_class_report(kelas_id)` menghitung rekap `hadir`, `terlambat`, `alpha` (diturunkan dari `total_sesi - attended` tanpa menyimpan baris kosong), `persentase_kehadiran` (`Decimal`), flag `warning_dibawah_75`, dan klasifikasi `risk_level` (`aman`, `berisiko`, `kritis` berdasarkan sisa jatah absen dari 14 pertemuan).
+  - `export_class_report_excel(kelas_id)` membangun workbook `.xlsx` 3 sheet (`Rekap Presensi` dengan highlight merah pada mahasiswa `< 75%`, `Warning <75%`, dan `Log Scan Pertemuan` berisi waktu scan, window QR, & jarak GPS).
+- **AI Attendance Analyzer (`attendance_ai_analyzer.py`):**
+  - Menerima baik array JSON `attendance_records` (`POST /api/attendance/ai-insights`) maupun data langsung dari DB (`GET /api/attendance/ai-insights`).
+  - Seluruh deteksi pola—mahasiswa yang sering absen pada hari/waktu tertentu (mis. *"Mahasiswa X sering absent Senin pagi -> hubungi untuk konseling"*) dan slot kelas dengan tingkat absen tinggi $\ge 30\%$ (mis. *"Kelas Y di jam 07:00 absen rate 40% -> pertimbangkan reschedule"*)—dihitung secara deterministik terlebih dahulu, lalu opsional diperkaya oleh `LLMClient` tervalidasi Pydantic (`AIAttendanceLLMOutput`) dengan *deterministic fallback*.
+
+
 ## 4. Trade-off yang Dipertimbangkan
 1. **Inheritance & Polymorphism vs Flat Database Models**
    - *Kelebihan*: Menerapkan *Open/Closed Principle* dan *Liskov Substitution Principle* secara ketat pada domain OOP.
@@ -276,4 +307,17 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 22. **Agregasi Deterministik + Narasi LLM Teranonimasi vs Mengirim Data Mentah CSV ke LLM**
     - *Kelebihan*: Menghilangkan risiko salah hitung/halusinasi angka pada total pendapatan, *collection rate*, top 10 tunggakan, dan rekomendasi `Z` mahasiswa, sekaligus menjaga privasi NIM/data pribadi tidak terkirim ke API eksternal.
     - *Kekurangan*: Analisis AI hanya menghasilkan narasi/saran eksekutif dari metrik teragregasi dan tidak menemukan anomali tersembunyi di tingkat baris mentah yang belum didefinisikan pada `analyze_payment_records()`.
+23. **Rotasi QR Otomatis Berbasis Window (`HMAC-SHA256` Nonce) vs Token QR Statis 15 Menit**
+    - *Kelebihan*: Menyelesaikan kontradiksi antara batas hidup QR (15 menit) dan jendela keterlambatan (30 menit), sekaligus mencegah mahasiswa memotret QR dan membagikannya ke luar kelas (*anti-replay* & *anti-titip absen*) karena QR lama hangus setiap `120` detik (+1 *grace window*).
+    - *Kekurangan*: Layar proyektor/dashboard dosen harus me-refresh gambar QR secara berkala (difasilitasi otomatis oleh timer countdown di `/dashboard/attendance`).
+24. **Validasi Geolokasi Haversine + Filter Akurasi GPS vs Hanya Validasi Token QR**
+    - *Kelebihan*: Menjamin kehadiran fisik mahasiswa di dalam radius ruang kuliah (`default 100m`) tanpa perangkat keras tambahan selain browser/ponsel mahasiswa, serta menolak koordinat kabur (`accuracy_m > 150m`).
+    - *Kekurangan*: GPS pada perangkat di dalam gedung bertingkat kadang mengalami *multipath drift*, sehingga geofence dibuat opsional per sesi dan radiusnya dapat disesuaikan oleh dosen.
+25. **Menurunkan Status `alpha` Secara Compute-on-Read (`total_sesi - attended`) vs Menyimpan Baris `alpha` untuk Semua Mahasiswa Setiap Sesi**
+    - *Kelebihan*: Menghemat ruang tabel `attendance_record` (hanya menyimpan mahasiswa yang benar-benar melakukan scan `hadir`/`terlambat`), bebas dari job *backfill* baris `alpha` saat sesi ditutup, dan selalu sinkron bila ada perubahan peserta KRS.
+    - *Kekurangan*: Query laporan kelas dan AI insights perlu menggabungkan daftar peserta KRS `APPROVED` dengan jumlah `attendance_session` yang telah dibuka.
+26. **`DatabasePresensiPort` dengan Fallback `StubPresensiPort` vs Memutus Total `StubPresensiPort`**
+    - *Kelebihan*: Menghubungkan data presensi QR nyata Minggu 12 langsung ke `GradeService` Minggu 9 tanpa merusak 23 unit/integration test Minggu 9 yang menyuntikkan persentase dummy lewat `StubPresensiPort`.
+    - *Kekurangan*: Selama sebuah kelas belum memiliki baris di `attendance_session`, `DatabasePresensiPort` masih mengembalikan nilai fallback (`100.00%` atau nilai stub).
+
 

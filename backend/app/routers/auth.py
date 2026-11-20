@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.core.database import get_db as get_orm_db
 from app.core.security import create_access_token, verify_password
 from app.models.schedule import Dosen as DosenJadwal
-from app.models.user import Admin, Dosen as DosenUser, User
+from app.models.user import Admin, Dosen as DosenUser, Mahasiswa as MahasiswaUser, User
 from app.schemas.auth import LoginRequest, Token
 
 router = APIRouter()
@@ -40,6 +40,10 @@ def login(body: LoginRequest, db: Session = Depends(get_orm_db)) -> Token:
                     ).first()
                     if dosen_jadwal is not None:
                         claims["dosen_id"] = dosen_jadwal.id
+            if isinstance(user, MahasiswaUser) or str(role).strip().lower() == "mahasiswa":
+                nim_val = getattr(user, "nim", None)
+                if nim_val:
+                    claims["nim"] = str(nim_val)
             token = create_access_token(claims)
             return Token(access_token=token)
 
@@ -68,6 +72,19 @@ def login(body: LoginRequest, db: Session = Depends(get_orm_db)) -> Token:
                 "role": "dosen",
                 "dosen_id": dosen_jadwal.id,
                 "nidn": dosen_jadwal.nidn,
+            }
+        )
+        return Token(access_token=token)
+
+    if (
+        body.email == settings.MAHASISWA_DEMO_EMAIL
+        and body.password == settings.MAHASISWA_DEMO_PASSWORD
+    ):
+        token = create_access_token(
+            {
+                "sub": body.email,
+                "role": "mahasiswa",
+                "nim": settings.MAHASISWA_DEMO_NIM,
             }
         )
         return Token(access_token=token)

@@ -128,3 +128,33 @@ def get_current_dosen(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return dosen
+
+
+def get_current_dosen_or_admin(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Dependency RBAC FastAPI: mengizinkan Dosen Pengampu maupun Admin Akademik."""
+    payload = _extract_bearer_payload(
+        authorization,
+        required_message="Autentikasi Dosen atau Admin Akademik diperlukan (Bearer token)",
+    )
+    role = str(payload.get("role") or "").strip().lower()
+    if role not in {"dosen", "admin", "admin_akademik"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akses ditolak: endpoint khusus Dosen atau Admin Akademik",
+        )
+    return payload
+
+
+def get_optional_bearer_payload(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any] | None:
+    """Mendekode Bearer token bila header Authorization dikirim; None jika tanpa header."""
+    if not authorization or not authorization.strip():
+        return None
+    return _extract_bearer_payload(
+        authorization,
+        required_message="Autentikasi Bearer token tidak valid",
+    )
+

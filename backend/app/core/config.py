@@ -21,6 +21,23 @@ class Settings(BaseSettings):
     LATE_FEE_MAX_RATE: str = "0.10"
     LATE_FEE_GRACE_DAYS: int = 0
     FINANCE_SCHEDULER_ENABLED: bool = True
+    MAHASISWA_DEMO_EMAIL: str = "mahasiswa.demo@sevima.ac.id"
+    MAHASISWA_DEMO_PASSWORD: str = "mhs123"
+    MAHASISWA_DEMO_NIM: str = "2025001-0101"
+    ATTENDANCE_TIMEZONE: str = "Asia/Jakarta"
+    ATTENDANCE_QR_ROTATE_SECONDS: int = 120
+    ATTENDANCE_QR_GRACE_WINDOWS: int = 1
+    ATTENDANCE_OPEN_EARLY_MINUTES: int = 15
+    ATTENDANCE_ON_TIME_MINUTES: int = 15
+    ATTENDANCE_LATE_MAX_MINUTES: int = 30
+    ATTENDANCE_MIN_PERCENT: str = "75"
+    ATTENDANCE_TOTAL_PERTEMUAN: int = 14
+    ATTENDANCE_GEO_ENABLED: bool = True
+    ATTENDANCE_GEOFENCE_RADIUS_M: int = 100
+    ATTENDANCE_GEO_MAX_ACCURACY_M: int = 150
+    ATTENDANCE_SCAN_RATE_LIMIT: int = 5
+    ATTENDANCE_SCAN_RATE_LIMIT_IP: int = 120
+    ATTENDANCE_SCAN_RATE_WINDOW_SECONDS: int = 60
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
