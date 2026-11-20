@@ -77,25 +77,45 @@ SAH = {
     (S.SUBMITTED, S.APPROVED, A.DOSEN_PA),
     (S.SUBMITTED, S.REVISION, A.DOSEN_PA),
     (S.REVISION, S.SUBMITTED, A.MAHASISWA),
+    (S.SUBMITTED, S.REVISION, A.SYSTEM),
+    (S.APPROVED, S.REVISION, A.SYSTEM),
 }
 ILEGAL = [p for p in product(S, S, A) if p not in SAH]
 
 
-def test_jumlah_kombinasi_transisi_ilegal_adalah_28() -> None:
-    """Memastikan ruang kombinasi 4x4x2=32 dikurangi 4 transisi sah menghasilkan 28 kasus ilegal."""
-    assert len(ILEGAL) == 28
+def test_jumlah_kombinasi_transisi_ilegal_adalah_42() -> None:
+    """Memastikan ruang kombinasi 4x4x3=48 dikurangi 6 transisi sah menghasilkan 42 kasus ilegal."""
+    assert len(SAH) == 6
+    assert len(ILEGAL) == 42
+    assert len(SAH) + len(ILEGAL) == 48
 
 
 @pytest.mark.parametrize("asal,tujuan,aktor", ILEGAL)
 def test_transisi_ilegal_ditolak(
     asal: KRSStatus, tujuan: KRSStatus, aktor: Actor
 ) -> None:
-    """Semua 28 kombinasi transisi ilegal wajib memicu TransitionError tanpa mengubah status."""
+    """Semua 42 kombinasi transisi ilegal wajib memicu TransitionError tanpa mengubah status."""
     krs = KRS(nim="2025001-0001", semester="20251", status=asal, dosen_pa_id=10)
     krs.details.append(KRSDetail(kode_mk="IF101"))
     with pytest.raises(TransitionError):
         krs.transition(tujuan, aktor, dosen_id=10, catatan="Revisi")
     assert krs.status == asal
+
+
+@pytest.mark.parametrize("asal", [KRSStatus.SUBMITTED, KRSStatus.APPROVED])
+def test_transisi_system_ke_revision_sah_dan_reset_approved_at(asal: KRSStatus) -> None:
+    """Transisi (SUBMITTED/APPROVED, SYSTEM) -> REVISION sah via transition() dan mereset approved_at."""
+    krs = KRS(nim="2025001-0001", semester="20251", status=asal, dosen_pa_id=10)
+    krs.details.append(KRSDetail(kode_mk="IF101"))
+    hasil = krs.transition(
+        KRSStatus.REVISION,
+        actor=Actor.SYSTEM,
+        catatan="Jadwal dipindah ke Rabu 10:00-12:00",
+    )
+    assert hasil == KRSStatus.REVISION
+    assert krs.status == KRSStatus.REVISION
+    assert krs.approved_at is None
+    assert krs.catatan_revisi == "Jadwal dipindah ke Rabu 10:00-12:00"
 
 
 offering_strategy = st.lists(

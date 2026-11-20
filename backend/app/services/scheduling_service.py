@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, time, timezone
+import logging
 from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.config import settings
+from app.core.security import get_password_hash
 from app.models.calon_mahasiswa import CalonMahasiswa
 from app.models.jalur_masuk import JalurMasuk
 from app.models.krs import (
+    Actor,
     KRS,
     KRSDetail,
     KRSLog,
@@ -23,12 +27,14 @@ from app.models.schedule import (
     HARI_MAP,
     Jadwal,
     Kelas,
+    Outbox,
     Ruangan,
     ScheduleConflictError,
     ScheduleError,
     ScheduleNotFoundError,
     normalize_hari,
 )
+from app.models.user import Admin, User
 from app.services.conflict_detector import (
     Conflict,
     cek_kapasitas,
@@ -37,10 +43,15 @@ from app.services.conflict_detector import (
     pasangan,
 )
 from app.services.schedule_observer import (
+    EventType,
     NotificationManager,
+    OutboxDispatcher,
+    ScheduleEvent,
     default_notification_manager,
 )
 from app.services.schedule_recommender import suggest_alternative_schedules
+
+logger = logging.getLogger(__name__)
 
 
 class SchedulingService:
@@ -288,7 +299,7 @@ class SchedulingService:
         reason: str,
         aksi: str,
     ) -> tuple[list[int], list[str], list[str]]:
-        """Mengembalikan seluruh KRS terdampak (SUBMITTED/APPROVED/REVISION) ke REVISION dalam transaksi ACID."""
+        """Mengembalikan KRS SUBMITTED/APPROVED terdampak ke REVISION via Actor.SYSTEM dalam transaksi ACID."""
         stmt = (
             select(KRS)
             .join(KRSDetail, KRSDetail.krs_id == KRS.id)
@@ -309,18 +320,16 @@ class SchedulingService:
 
         for krs in affected_krs:
             all_nims.append(krs.nim)
-            if krs.status in (
-                KRSStatus.SUBMITTED,
-                KRSStatus.APPROVED,
-                KRSStatus.REVISION,
-            ):
-                krs.invalidate_by_schedule_change(reason=reason)
+            if krs.status in (KRSStatus.SUBMITTED, KRSStatus.APPROVED):
+                krs.transition(
+                    KRSStatus.REVISION,
+                    actor=Actor.SYSTEM,
+                    catatan=reason,
+                )
                 self.db.add(KRSLog(krs_id=krs.id, aksi=aksi, oleh=None))
                 self.db.add(Notifikasi(nim=krs.nim, pesan=reason))
                 invalidated_ids.append(krs.id)
                 invalidated_nims.append(krs.nim)
-            else:
-                self.db.add(Notifikasi(nim=krs.nim, pesan=reason))
 
         return invalidated_ids, invalidated_nims, all_nims
 
@@ -398,7 +407,57 @@ class SchedulingService:
             "jam_selesai": jadwal.jam_selesai.strftime("%H:%M"),
             "jam": f"{jadwal.jam_mulai.strftime('%H:%M')}-{jadwal.jam_selesai.strftime('%H:%M')}",
             "enrolled_count": eff_enrolled,
+            "sequence": int(getattr(jadwal, "sequence", 0) or 0),
         }
+
+    def _build_snapshot_from_parts(
+        self,
+        *,
+        schedule_id: int,
+        kelas: Kelas,
+        ruangan: Ruangan,
+        dosen: Dosen,
+        hari: int,
+        mulai: time,
+        selesai: time,
+        sequence: int,
+        nims: set[str],
+    ) -> dict[str, Any]:
+        mk = kelas.matakuliah
+        terdaftar = len(nims)
+        kuota = kelas.kuota
+        return {
+            "id": schedule_id,
+            "kelas_id": kelas.id,
+            "kode_mk": kelas.kode_mk,
+            "nama_mk": mk.nama if mk else kelas.kode_mk,
+            "nama_kelas": kelas.nama_kelas,
+            "kuota": kuota,
+            "terdaftar": terdaftar,
+            "ruangan_kode": ruangan.kode,
+            "ruangan_nama": ruangan.nama,
+            "kapasitas": ruangan.kapasitas,
+            "dosen_id": dosen.id,
+            "dosen_nidn": dosen.nidn,
+            "dosen": dosen.nama,
+            "semester": kelas.semester,
+            "hari": hari,
+            "hari_nama": HARI_MAP[hari],
+            "jam_mulai": mulai.strftime("%H:%M"),
+            "jam_selesai": selesai.strftime("%H:%M"),
+            "jam": f"{mulai.strftime('%H:%M')}-{selesai.strftime('%H:%M')}",
+            "enrolled_count": max(kuota, terdaftar),
+            "sequence": sequence,
+        }
+
+    def _run_dispatcher_safe(self) -> list[dict[str, Any]]:
+        """Menjalankan OutboxDispatcher setelah komit; kegagalan pengiriman tidak membatalkan perubahan jadwal."""
+        try:
+            summary = OutboxDispatcher(self.db, self.notification_manager).run()
+            return [r.to_dict() for r in summary.records]
+        except Exception as exc:
+            logger.warning("OutboxDispatcher gagal setelah komit: %s", exc)
+            return []
 
     def _simpan(
         self,
@@ -413,8 +472,13 @@ class SchedulingService:
         force: bool,
         is_new: bool,
         old_snapshot: dict[str, Any] | None = None,
+        dispatch_now: bool = True,
     ) -> dict[str, Any]:
-        """Alur atomik bersama create & update: validasi -> kunci -> cek bentrok SQL -> cek kapasitas -> tambah/simpan -> commit."""
+        """Alur atomik bersama create & update: validasi -> kunci -> cek bentrok SQL -> cek kapasitas -> invalidasi KRS + outbox -> commit -> dispatch."""
+        outbox_event_id: str | None = None
+        invalidated_nims: list[str] = []
+        serialized_conflicts: list[dict[str, Any]] = []
+
         try:
             kelas = self.get_class(kelas_id)
             hari_num = normalize_hari(hari)
@@ -445,6 +509,7 @@ class SchedulingService:
                     f"Jadwal bentrok: {ringkas}",
                     conflicts=conflicts,
                 )
+            serialized_conflicts = [c.to_dict() for c in conflicts]
 
             # 3. Cek kapasitas ruangan: max(kuota, terdaftar) <= ruangan.kapasitas
             cek_kapasitas(self.db, ruangan, kelas)
@@ -459,12 +524,11 @@ class SchedulingService:
             jadwal.jam_selesai = selesai
             jadwal.updated_at = now
             if is_new:
+                jadwal.sequence = 0
                 jadwal.created_at = now
                 self.db.add(jadwal)
-
-            invalidated_ids: list[int] = []
-            invalidated_nims: list[str] = []
-            all_nims: list[str] = []
+            else:
+                jadwal.sequence = int(getattr(jadwal, "sequence", 0) or 0) + 1
 
             if not is_new and old_snapshot is not None:
                 reason = (
@@ -478,6 +542,33 @@ class SchedulingService:
                     reason=reason,
                     aksi="invalidate_schedule_change",
                 )
+                nims_class = self._nims_for_class(kelas)
+                notify_nims = sorted(set(all_nims) | nims_class)
+                after_snapshot = self._build_snapshot_from_parts(
+                    schedule_id=jadwal.id,
+                    kelas=kelas,
+                    ruangan=ruangan,
+                    dosen=dosen,
+                    hari=hari_num,
+                    mulai=mulai,
+                    selesai=selesai,
+                    sequence=jadwal.sequence,
+                    nims=nims_class,
+                )
+                event = ScheduleEvent(
+                    event_type=EventType.SCHEDULE_CHANGED,
+                    before=old_snapshot,
+                    after=after_snapshot,
+                    meta={
+                        "affected_nims": notify_nims,
+                        "invalidated_krs_ids": invalidated_ids,
+                        "conflicts": serialized_conflicts,
+                        "dosen": after_snapshot["dosen"],
+                        "old_dosen": old_snapshot.get("dosen", ""),
+                    },
+                )
+                outbox_event_id = event.event_id
+                self.db.add(Outbox.from_event(event))
 
             self.db.commit()
         except Exception:
@@ -487,40 +578,17 @@ class SchedulingService:
         saved = self.get_schedule(jadwal.id)
         nims = self._nims_for_class(saved.kelas)
         new_snapshot = self.schedule_to_response_dict(saved, nims_override=nims)
-        serialized_conflicts = [c.to_dict() for c in conflicts]
-        notify_nims = sorted(set(all_nims) | nims)
 
-        if is_new:
-            event_type = "CONFLICT_DETECTED" if serialized_conflicts else "SCHEDULE_CREATED"
-            payload: dict[str, Any] = {
-                **new_snapshot,
-                "ruangan": new_snapshot["ruangan_kode"],
-                "affected_nims": notify_nims,
-                "conflicts": serialized_conflicts,
-            }
-        else:
-            event_type = "SCHEDULE_CHANGED"
-            payload = {
-                "old_schedule": old_snapshot,
-                "new_schedule": {
-                    **new_snapshot,
-                    "ruangan": new_snapshot["ruangan_kode"],
-                },
-                "kode_mk": new_snapshot["kode_mk"],
-                "nama_mk": new_snapshot["nama_mk"],
-                "dosen": new_snapshot["dosen"],
-                "old_dosen": old_snapshot["dosen"] if old_snapshot else "",
-                "affected_nims": notify_nims,
-                "invalidated_krs_ids": invalidated_ids,
-                "conflicts": serialized_conflicts,
-            }
+        notifications_sent: list[dict[str, Any]] = []
+        if not is_new and dispatch_now:
+            notifications_sent = self._run_dispatcher_safe()
 
-        notifs = self.notification_manager.notify(event_type, payload)
         return {
             "schedule": new_snapshot,
             "invalidated_krs_nims": invalidated_nims,
-            "notifications_sent": [n.to_dict() for n in notifs],
+            "notifications_sent": notifications_sent,
             "conflicts": serialized_conflicts,
+            "outbox_event_id": outbox_event_id,
         }
 
     def create_schedule(
@@ -557,8 +625,9 @@ class SchedulingService:
         jam_mulai: time | str | None = None,
         jam_selesai: time | str | None = None,
         force: bool = False,
+        dispatch_now: bool = True,
     ) -> dict[str, Any]:
-        """Memperbarui jadwal, memindahkan KRS terdampak ke REVISION (ACID), & notify Observer."""
+        """Memperbarui jadwal, memindahkan KRS terdampak ke REVISION (ACID), menulis Outbox, & dispatch setelah komit."""
         jadwal = self.get_schedule(schedule_id)
         old_snapshot = self.schedule_to_response_dict(jadwal)
         return self._simpan(
@@ -572,10 +641,14 @@ class SchedulingService:
             force=force,
             is_new=False,
             old_snapshot=old_snapshot,
+            dispatch_now=dispatch_now,
         )
 
-    def delete_schedule(self, schedule_id: int) -> dict[str, Any]:
-        """Menghapus jadwal, memindahkan KRS terdampak ke REVISION (ACID), & notify Observer."""
+    def delete_schedule(
+        self, schedule_id: int, *, dispatch_now: bool = True
+    ) -> dict[str, Any]:
+        """Menghapus jadwal, memindahkan KRS terdampak ke REVISION, menulis Outbox (ACID), & dispatch setelah komit."""
+        outbox_event_id: str | None = None
         try:
             jadwal = self.get_schedule(schedule_id)
             kelas = jadwal.kelas
@@ -591,27 +664,52 @@ class SchedulingService:
                 reason=reason,
                 aksi="invalidate_schedule_deleted",
             )
+            notify_nims = sorted(set(all_nims) | nims)
+            event = ScheduleEvent(
+                event_type=EventType.SCHEDULE_DELETED,
+                before=old_snapshot,
+                after=None,
+                meta={
+                    "affected_nims": notify_nims,
+                    "invalidated_krs_ids": invalidated_ids,
+                    "dosen": old_snapshot.get("dosen", ""),
+                },
+            )
+            outbox_event_id = event.event_id
+            self.db.add(Outbox.from_event(event))
             self.db.delete(jadwal)
             self.db.commit()
         except Exception:
             self.db.rollback()
             raise
 
-        notify_nims = sorted(set(all_nims) | nims)
-        notifs = self.notification_manager.notify(
-            "SCHEDULE_DELETED",
-            {
-                **old_snapshot,
-                "ruangan": old_snapshot["ruangan_kode"],
-                "affected_nims": notify_nims,
-                "invalidated_krs_ids": invalidated_ids,
-            },
-        )
+        notifications_sent: list[dict[str, Any]] = []
+        if dispatch_now:
+            notifications_sent = self._run_dispatcher_safe()
+
         return {
             "detail": f"Jadwal {schedule_id} ({old_snapshot['kode_mk']} {old_snapshot['nama_kelas']}) berhasil dihapus",
             "deleted_schedule_id": schedule_id,
             "invalidated_krs_nims": invalidated_nims,
-            "notifications_sent": [n.to_dict() for n in notifs],
+            "notifications_sent": notifications_sent,
+            "outbox_event_id": outbox_event_id,
+        }
+
+    def list_outbox(self, limit: int = 50) -> list[Outbox]:
+        """Mengambil daftar baris Transactional Outbox terbaru untuk monitoring admin."""
+        stmt = select(Outbox).order_by(Outbox.id.desc()).limit(limit)
+        return list(self.db.scalars(stmt).all())
+
+    def dispatch_pending_outbox(self, limit: int = 50) -> dict[str, Any]:
+        """Menjalankan OutboxDispatcher secara eksplisit untuk memproses baris pending."""
+        summary = OutboxDispatcher(self.db, self.notification_manager).run(limit=limit)
+        return {
+            "picked": summary.picked,
+            "sent": summary.sent,
+            "retried": summary.retried,
+            "failed": summary.failed,
+            "failed_observers": summary.failed_observers,
+            "notifications_sent": [r.to_dict() for r in summary.records],
         }
 
     # ------------------------------------------------------------------
@@ -721,7 +819,22 @@ class SchedulingService:
     # ------------------------------------------------------------------
 
     def seed_demo_data(self, semester: str = "20251") -> dict[str, Any]:
-        """Mengisi data demo 4 model (Ruangan, Dosen, Kelas paralel, Jadwal bentrok) & KRS secara idempoten."""
+        """Mengisi data demo 4 model (Ruangan, Dosen, Kelas paralel, Jadwal bentrok), Admin demo, & KRS secara idempoten."""
+        demo_admin = self.db.scalars(
+            select(User).where(User.email == settings.ADMIN_DEMO_EMAIL)
+        ).first()
+        if demo_admin is None:
+            self.db.add(
+                Admin(
+                    id="ADM-001",
+                    nama="Admin Akademik",
+                    email=settings.ADMIN_DEMO_EMAIL,
+                    hashed_password=get_password_hash(settings.ADMIN_DEMO_PASSWORD),
+                    admin_role="admin_akademik",
+                )
+            )
+            self.db.flush()
+
         prodi = self.db.scalars(
             select(ProgramStudi).where(ProgramStudi.kode == "001")
         ).first()

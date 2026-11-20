@@ -38,7 +38,8 @@ def get_db():
     finally:
         conn.close()
 
-from app.routers import krs, pmb, schedule
+from app.routers import auth, krs, pmb, schedule
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(pmb.router, prefix="/api/pmb", tags=["PMB"])
 app.include_router(krs.router, prefix="/api/krs", tags=["KRS"])
 app.include_router(schedule.router, prefix="/api/schedules", tags=["Schedules"])

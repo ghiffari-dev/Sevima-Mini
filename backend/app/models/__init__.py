@@ -31,6 +31,8 @@ from app.models.schedule import (
     Jadwal,
     JadwalKuliah,
     Kelas as KelasJadwal,
+    Outbox,
+    OutboxStatus,
     Ruangan,
     ScheduleCapacityError,
     ScheduleConflictError,

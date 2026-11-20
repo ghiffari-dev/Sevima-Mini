@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from datetime import time
 import json
 import logging
-import re
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 import zlib
 
 import httpx
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.core.config import settings
 from app.models.schedule import HARI_MAP, Jadwal, Ruangan, normalize_hari
@@ -28,6 +28,206 @@ _DEFAULT_START_MINUTES = [
     7 * 60,   # 07:00 (pagi awal)
     15 * 60,  # 15:00 (sore)
 ]
+
+
+@runtime_checkable
+class LLMClient(Protocol):
+    """Interface tunggal klien LLM agar mudah ditukar dengan FakeLLMClient saat pengujian."""
+
+    def complete(self, prompt: str) -> str:
+        ...
+
+
+class GeminiLLMClient:
+    """Implementasi LLMClient untuk Google Gemini API dengan temperature rendah & JSON mode."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-2.0-flash",
+        temperature: float = 0.1,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.temperature = temperature
+
+    def complete(self, prompt: str) -> str:
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.model}:generateContent?key={self.api_key}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": self.temperature,
+                "responseMimeType": "application/json",
+            },
+        }
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        candidates = data.get("candidates") or []
+        if candidates:
+            parts = (candidates[0].get("content") or {}).get("parts") or []
+            if parts and "text" in parts[0]:
+                return str(parts[0]["text"])
+        return ""
+
+
+class OpenRouterLLMClient:
+    """Implementasi LLMClient untuk OpenRouter (tier gratis) dengan temperature rendah."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "google/gemini-2.0-flash-exp:free",
+        temperature: float = 0.1,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.temperature = temperature
+
+    def complete(self, prompt: str) -> str:
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        payload = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "messages": [
+                {"role": "system", "content": "Respond only with a valid JSON array."},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        choices = data.get("choices") or []
+        if choices:
+            return str((choices[0].get("message") or {}).get("content") or "")
+        return ""
+
+
+class OpenAILLMClient:
+    """Implementasi LLMClient untuk OpenAI Chat Completions API."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.1,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.temperature = temperature
+
+    def complete(self, prompt: str) -> str:
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        payload = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "messages": [
+                {"role": "system", "content": "Respond only with a valid JSON array."},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        choices = data.get("choices") or []
+        if choices:
+            return str((choices[0].get("message") or {}).get("content") or "")
+        return ""
+
+
+class FakeLLMClient:
+    """Klien LLM palsu yang deterministik dan gratis untuk unit test CI tanpa API sungguhan."""
+
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.last_prompt: str | None = None
+
+    def complete(self, prompt: str) -> str:
+        self.last_prompt = prompt
+        return self.response
+
+
+def get_default_llm_client() -> LLMClient | None:
+    """Memilih LLMClient aktif berdasarkan environment variables di settings."""
+    if settings.GEMINI_API_KEY:
+        return GeminiLLMClient(
+            api_key=settings.GEMINI_API_KEY,
+            model=settings.AI_MODEL or "gemini-2.0-flash",
+        )
+    if settings.OPENROUTER_API_KEY:
+        return OpenRouterLLMClient(
+            api_key=settings.OPENROUTER_API_KEY,
+            model=settings.AI_MODEL or "google/gemini-2.0-flash-exp:free",
+        )
+    if settings.OPENAI_API_KEY:
+        return OpenAILLMClient(
+            api_key=settings.OPENAI_API_KEY,
+            model=settings.AI_MODEL or "gpt-4o-mini",
+        )
+    return None
+
+
+def _call_llm_raw(prompt: str) -> str | None:
+    """Wrapper pemanggil LLM default (dipertahankan untuk kompatibilitas monkeypatch)."""
+    client = get_default_llm_client()
+    if client is None:
+        return None
+    return client.complete(prompt)
+
+
+class AISuggestionItem(BaseModel):
+    """Saringan 2 (Pydantic): validasi ketat skema satu saran jadwal dari LLM."""
+
+    hari: int
+    jam_mulai: time
+    jam_selesai: time
+    ruangan: str = Field(..., min_length=1)
+    reason: str = "Direkomendasikan AI & tervalidasi bebas bentrok."
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_jam_range(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            raise ValueError("Item saran harus berupa object JSON")
+        copied = dict(data)
+        if ("jam_mulai" not in copied or "jam_selesai" not in copied) and "jam" in copied:
+            jam_raw = str(copied["jam"]).strip()
+            if "-" not in jam_raw:
+                raise ValueError("Field jam harus berformat HH:MM-HH:MM")
+            s_str, e_str = jam_raw.split("-", 1)
+            copied["jam_mulai"] = s_str.strip()
+            copied["jam_selesai"] = e_str.strip()
+        if "ruangan" not in copied and "ruangan_kode" in copied:
+            copied["ruangan"] = copied["ruangan_kode"]
+        if isinstance(copied.get("ruangan"), str):
+            copied["ruangan"] = copied["ruangan"].strip()
+        if not copied.get("reason"):
+            copied["reason"] = "Direkomendasikan AI & tervalidasi bebas bentrok."
+        return copied
+
+    @field_validator("hari", mode="before")
+    @classmethod
+    def validate_hari(cls, value: Any) -> int:
+        return normalize_hari(value)
+
+    @field_validator("jam_mulai", "jam_selesai", mode="before")
+    @classmethod
+    def validate_time(cls, value: Any) -> time:
+        return parse_time_value(value)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "AISuggestionItem":
+        if self.jam_mulai >= self.jam_selesai:
+            raise ValueError("jam_mulai harus lebih awal daripada jam_selesai")
+        return self
 
 
 def _fmt_minutes(total_minutes: int) -> str:
@@ -187,7 +387,7 @@ def build_rescheduling_prompt(
     conflicted_schedule: dict[str, Any],
     available_slots: list[dict[str, Any]],
 ) -> str:
-    """Menyusun prompt terstruktur untuk AI Scheduling Assistant."""
+    """Menyusun prompt terstruktur untuk AI Scheduling Assistant (slot tersedia dihitung kode)."""
     nama = (
         conflicted_schedule.get("nama_mk")
         or conflicted_schedule.get("nama")
@@ -208,74 +408,28 @@ def build_rescheduling_prompt(
     return (
         "Anda adalah scheduling assistant. Diberikan:\n"
         f"- Jadwal bentrok: {nama} ({hari} {jam}, Ruang {ruangan}, {enrolled} mhs, Dosen {dosen})\n"
-        f"- Available slots: {slots_preview}\n\n"
-        "Rekomendasikan 3 alternatif jadwal yang:\n"
+        f"- Available slots (dihitung oleh sistem): {slots_preview}\n\n"
+        "Rekomendasikan maksimal 3 alternatif jadwal dari daftar slot di atas yang:\n"
         "1. Ruangan kapasitasnya cukup\n"
         "2. Tidak bentrok dengan jadwal dosen\n"
         "3. Minimal disruption untuk mahasiswa (prioritas pagi/siang)\n"
-        'Output format JSON saja: [{"hari": "...", "jam": "HH:MM-HH:MM", "ruangan": "...", "reason": "..."}]'
+        'Balas hanya JSON dengan skema: [{"hari": "Rabu", "jam": "HH:MM-HH:MM", "ruangan": "...", "reason": "..."}]'
     )
 
 
-def _extract_json_array(raw_text: str) -> list[dict[str, Any]]:
-    """Mengekstrak array JSON dari respons teks LLM (termasuk blok markdown ```json)."""
-    cleaned = raw_text.strip()
-    fence_match = re.search(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```", cleaned, re.IGNORECASE)
-    if fence_match:
-        cleaned = fence_match.group(1)
-    else:
-        bracket_match = re.search(r"(\[[\s\S]*\])", cleaned)
-        if bracket_match:
-            cleaned = bracket_match.group(1)
-    parsed = json.loads(cleaned)
-    if not isinstance(parsed, list):
-        raise ValueError("Respons AI bukan list JSON")
-    return [item for item in parsed if isinstance(item, dict)]
-
-
-def _call_llm_raw(prompt: str) -> str | None:
-    """Memanggil Gemini atau OpenAI API via httpx jika API key tersedia di environment."""
-    if settings.GEMINI_API_KEY:
-        model = settings.AI_MODEL or "gemini-2.0-flash"
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={settings.GEMINI_API_KEY}"
-        )
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2},
-        }
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        candidates = data.get("candidates") or []
-        if candidates:
-            parts = (candidates[0].get("content") or {}).get("parts") or []
-            if parts and "text" in parts[0]:
-                return str(parts[0]["text"])
-
-    if settings.OPENAI_API_KEY:
-        model = settings.AI_MODEL or "gpt-4o-mini"
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
-        payload = {
-            "model": model,
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": "Respond only with valid JSON array."},
-                {"role": "user", "content": prompt},
-            ],
-        }
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        choices = data.get("choices") or []
-        if choices:
-            return str((choices[0].get("message") or {}).get("content") or "")
-
-    return None
+def _extract_json_array(raw_text: str) -> list[Any]:
+    """Saringan 1 (Parsing): ambil substring antara '[' pertama dan ']' terakhir tanpa crash."""
+    if not raw_text:
+        return []
+    first = raw_text.find("[")
+    last = raw_text.rfind("]")
+    if first == -1 or last == -1 or last <= first:
+        return []
+    try:
+        parsed = json.loads(raw_text[first : last + 1])
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _normalize_rooms(available_rooms: list[Ruangan | dict[str, Any]]) -> dict[str, int]:
@@ -338,6 +492,80 @@ def _slot_is_conflict_free(
         return False
     conflicts = detect_conflicts_sweep([*other_slots, cand_slot])
     return not any(cand_slot.id in c.affected for c in conflicts)
+
+
+def filter_ai_suggestions(
+    raw_text: str,
+    *,
+    target: _ScheduleView,
+    other_slots: list[JadwalSlot],
+    rooms_map: dict[str, int],
+    top_k: int = 3,
+) -> list[dict[str, Any]]:
+    """Menjalankan 4 saringan ketat atas keluaran AI:
+    1. Parsing substring '['..']' (invalid JSON -> [])
+    2. Skema Pydantic per item (item rusak dibuang satu per satu)
+    3. Ruangan harus ada di DB dan kapasitas >= enrolled_count
+    4. Calon ID = -1 diuji dengan detect_conflicts_sweep; jika -1 ada di conflicts -> buang
+    """
+    raw_items = _extract_json_array(raw_text)
+    if not raw_items:
+        return []
+
+    filtered: list[dict[str, Any]] = []
+    seen_keys: set[tuple[int, int, int, str]] = set()
+
+    for raw_item in raw_items:
+        if len(filtered) >= top_k:
+            break
+        if not isinstance(raw_item, dict):
+            continue
+
+        # Saringan 2: validasi skema Pydantic per item
+        try:
+            item = AISuggestionItem.model_validate(raw_item)
+        except ValidationError:
+            continue
+
+        # Saringan 3: ruangan ada di DB & kapasitas mencukupi
+        kapasitas = rooms_map.get(item.ruangan)
+        if kapasitas is None or kapasitas < target.enrolled_count:
+            continue
+
+        # Saringan 4: buat calon ID = -1 & uji dengan detect_conflicts_sweep
+        cand_slot = JadwalSlot(
+            id=-1,
+            hari=item.hari,
+            jam_mulai=item.jam_mulai,
+            jam_selesai=item.jam_selesai,
+            ruangan_kode=item.ruangan,
+            dosen_id=target.dosen_id,
+        )
+        conflicts = detect_conflicts_sweep([*other_slots, cand_slot])
+        if any(-1 in c.affected for c in conflicts):
+            continue
+
+        start_min = to_minutes(item.jam_mulai)
+        end_min = to_minutes(item.jam_selesai)
+        key = (item.hari, start_min, end_min, item.ruangan.lower())
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        filtered.append(
+            {
+                "hari": HARI_MAP[item.hari],
+                "hari_num": item.hari,
+                "jam": f"{_fmt_minutes(start_min)}-{_fmt_minutes(end_min)}",
+                "jam_mulai": _fmt_minutes(start_min),
+                "jam_selesai": _fmt_minutes(end_min),
+                "ruangan": item.ruangan,
+                "kapasitas": kapasitas,
+                "reason": item.reason,
+            }
+        )
+
+    return filtered
 
 
 def _score_candidate_slots(
@@ -473,17 +701,14 @@ def _score_candidate_slots(
     return scored
 
 
-def suggest_alternative_schedules(
+def _prepare_context(
     conflicted_schedule: Jadwal | JadwalSlot | dict[str, Any],
     existing_schedules: list[Jadwal | JadwalSlot | dict[str, Any]],
     available_rooms: list[Ruangan | dict[str, Any]],
     *,
     available_slots: list[dict[str, Any]] | None = None,
     student_busy_slots: list[dict[str, Any] | tuple[int | str, int, int]] | None = None,
-    top_k: int = 3,
-    use_ai: bool = True,
-) -> dict[str, Any]:
-    """Menghasilkan hingga 3 alternatif jadwal pengganti (Hybrid AI + Constraint Guardrail)."""
+) -> tuple[_ScheduleView, dict[str, int], list[JadwalSlot], list[_CandidateSlot], str]:
     target = _to_schedule_view(conflicted_schedule, fallback_idx=-999999)
     rooms_map = _normalize_rooms(available_rooms)
 
@@ -501,8 +726,6 @@ def suggest_alternative_schedules(
         available_slots=available_slots,
         student_busy_slots=student_busy_slots,
     )
-
-    candidate_dicts = [c.to_dict() for c in valid_candidates]
     target_dict = {
         "kode_mk": target.kode_mk,
         "nama_mk": target.nama_mk,
@@ -513,86 +736,109 @@ def suggest_alternative_schedules(
         "dosen": target.dosen_nama,
         "enrolled_count": target.enrolled_count,
     }
-    prompt_preview = build_rescheduling_prompt(target_dict, candidate_dicts)
+    prompt_preview = build_rescheduling_prompt(
+        target_dict, [c.to_dict() for c in valid_candidates]
+    )
+    return target, rooms_map, other_slots, valid_candidates, prompt_preview
+
+
+def recommend_with_llm(
+    conflicted_schedule: Jadwal | JadwalSlot | dict[str, Any],
+    existing_schedules: list[Jadwal | JadwalSlot | dict[str, Any]],
+    available_rooms: list[Ruangan | dict[str, Any]],
+    llm_client: LLMClient,
+    *,
+    available_slots: list[dict[str, Any]] | None = None,
+    student_busy_slots: list[dict[str, Any] | tuple[int | str, int, int]] | None = None,
+    top_k: int = 3,
+) -> list[dict[str, Any]]:
+    """Memanggil LLMClient lalu mengembalikan HANYA saran yang lolos 4 saringan (tanpa fallback)."""
+    target, rooms_map, other_slots, _, prompt = _prepare_context(
+        conflicted_schedule,
+        existing_schedules,
+        available_rooms,
+        available_slots=available_slots,
+        student_busy_slots=student_busy_slots,
+    )
+    raw_ai = llm_client.complete(prompt)
+    return filter_ai_suggestions(
+        raw_ai,
+        target=target,
+        other_slots=other_slots,
+        rooms_map=rooms_map,
+        top_k=top_k,
+    )
+
+
+def suggest_alternative_schedules(
+    conflicted_schedule: Jadwal | JadwalSlot | dict[str, Any],
+    existing_schedules: list[Jadwal | JadwalSlot | dict[str, Any]],
+    available_rooms: list[Ruangan | dict[str, Any]],
+    *,
+    available_slots: list[dict[str, Any]] | None = None,
+    student_busy_slots: list[dict[str, Any] | tuple[int | str, int, int]] | None = None,
+    top_k: int = 3,
+    use_ai: bool = True,
+    llm_client: LLMClient | None = None,
+    allow_fallback: bool = True,
+) -> dict[str, Any]:
+    """Menghasilkan hingga 3 alternatif jadwal pengganti (LLM + 4 Saringan + opsional fallback)."""
+    target, rooms_map, other_slots, valid_candidates, prompt_preview = _prepare_context(
+        conflicted_schedule,
+        existing_schedules,
+        available_rooms,
+        available_slots=available_slots,
+        student_busy_slots=student_busy_slots,
+    )
 
     chosen: list[dict[str, Any]] = []
     chosen_keys: set[tuple[int, int, int, str]] = set()
     source = "rule_based_fallback"
-    cand_id = target.id if target.id >= 0 else -999999
 
-    ai_configured = bool(settings.GEMINI_API_KEY or settings.OPENAI_API_KEY)
+    ai_configured = bool(
+        llm_client is not None
+        or settings.GEMINI_API_KEY
+        or settings.OPENROUTER_API_KEY
+        or settings.OPENAI_API_KEY
+    )
     if use_ai and ai_configured and valid_candidates:
         try:
-            raw_ai = _call_llm_raw(prompt_preview)
+            raw_ai = (
+                llm_client.complete(prompt_preview)
+                if llm_client is not None
+                else _call_llm_raw(prompt_preview)
+            )
             if raw_ai:
-                ai_items = _extract_json_array(raw_ai)
-                for item in ai_items:
-                    if len(chosen) >= top_k:
-                        break
-                    try:
-                        hari_num = normalize_hari(item["hari"])
-                        jam_str = str(item["jam"])
-                        if "-" in jam_str:
-                            s_str, e_str = jam_str.split("-", 1)
-                            start_min = to_minutes(s_str)
-                            end_min = to_minutes(e_str)
-                        else:
-                            start_min = to_minutes(jam_str)
-                            end_min = start_min + (
-                                to_minutes(target.jam_selesai) - to_minutes(target.jam_mulai)
-                            )
-                        ruangan = str(item["ruangan"]).strip()
-                        kapasitas = rooms_map.get(ruangan, 0)
-                        if kapasitas <= 0 or start_min >= end_min:
-                            continue
-
-                        ai_slot = JadwalSlot(
-                            id=cand_id,
-                            hari=hari_num,
-                            jam_mulai=_minutes_to_time(start_min),
-                            jam_selesai=_minutes_to_time(end_min),
-                            ruangan_kode=ruangan,
-                            dosen_id=target.dosen_id,
-                        )
-                        if not _slot_is_conflict_free(
-                            ai_slot, target.enrolled_count, other_slots, kapasitas
-                        ):
-                            continue
-
-                        key = (hari_num, start_min, end_min, ruangan.lower())
-                        if key in chosen_keys:
-                            continue
+                filtered = filter_ai_suggestions(
+                    raw_ai,
+                    target=target,
+                    other_slots=other_slots,
+                    rooms_map=rooms_map,
+                    top_k=top_k,
+                )
+                for rec in filtered:
+                    key = (
+                        int(rec["hari_num"]),
+                        to_minutes(rec["jam_mulai"]),
+                        to_minutes(rec["jam_selesai"]),
+                        str(rec["ruangan"]).strip().lower(),
+                    )
+                    if key not in chosen_keys:
                         chosen_keys.add(key)
-                        chosen.append(
-                            {
-                                "hari": HARI_MAP[hari_num],
-                                "hari_num": hari_num,
-                                "jam": f"{_fmt_minutes(start_min)}-{_fmt_minutes(end_min)}",
-                                "jam_mulai": _fmt_minutes(start_min),
-                                "jam_selesai": _fmt_minutes(end_min),
-                                "ruangan": ruangan,
-                                "kapasitas": kapasitas,
-                                "reason": str(
-                                    item.get("reason")
-                                    or "Direkomendasikan AI & tervalidasi bebas bentrok."
-                                ),
-                            }
-                        )
-                    except (KeyError, ValueError, TypeError):
-                        continue
-
+                        chosen.append(rec)
                 if chosen:
-                    source = "ai" if len(chosen) >= top_k else "ai_with_fallback"
+                    source = "ai" if (len(chosen) >= top_k or not allow_fallback) else "ai_with_fallback"
         except Exception as exc:
             logger.warning("AI rescheduler gagal, fallback ke algoritma lokal: %s", exc)
 
-    for cand in valid_candidates:
-        if len(chosen) >= top_k:
-            break
-        key = (cand.hari_num, cand.start_min, cand.end_min, cand.ruangan.strip().lower())
-        if key not in chosen_keys:
-            chosen_keys.add(key)
-            chosen.append(cand.to_dict())
+    if allow_fallback:
+        for cand in valid_candidates:
+            if len(chosen) >= top_k:
+                break
+            key = (cand.hari_num, cand.start_min, cand.end_min, cand.ruangan.strip().lower())
+            if key not in chosen_keys:
+                chosen_keys.add(key)
+                chosen.append(cand.to_dict())
 
     return {
         "source": source,

@@ -106,24 +106,43 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 | **Kompleksitas & Dependensi** | Ringkas (~25 baris, +0 dependensi) | Paling sederhana (**dipertahankan sebagai *oracle* tes**) | Struktur BST tambahan (`max_end`) / paket eksternal |
 | **Kesesuaian Skala** | **Optimal** untuk penjadwalan semester (~600 jadwal) | Memadai untuk acuan pengujian & verifikasi properti | Layak untuk *solver* ribuan kandidat/detik atau histori multi-tahun |
 
-### 3.15 Observer Pattern (`ScheduleSubject` & `NotificationManager`)
-- **Publisher–Subscriber Terpisah**: `ScheduleSubject` dan turunannya `NotificationManager` (`backend/app/services/schedule_observer.py`) mengelola daftar subscriber secara dinamis lewat `attach()`, `detach()`, dan `notify(event_type, schedule_data)` untuk empat tipe event (`SCHEDULE_CREATED`, `SCHEDULE_CHANGED`, `SCHEDULE_DELETED`, `CONFLICT_DETECTED`). Alur interaksi lengkap didokumentasikan pada `repo-structure/diagrams/sequence-schedule-observer.mmd`.
-- **Multi-Stakeholder & Simulasi Medium**:
+### 3.15 Observer Pattern (`ScheduleSubject`, `typing.Protocol`, & Strategy `LogChannel`)
+- **Pemisahan Tanggung Jawab (OCP) & `typing.Protocol` vs `ABC`**: `ScheduleSubject` dan turunannya `NotificationManager` (`backend/app/services/schedule_observer.py`) mengelola subscriber lewat `attach()`, `detach()`, dan `notify(event)`. Kontrak `ScheduleObserver`, `NotificationChannel`, dan `ParticipantRepository` ditulis menggunakan `typing.Protocol` (*structural typing*) agar kelas observer atau spy uji tidak wajib mewarisi kelas dasar tertentu (mematuhi *Dependency Inversion Principle* dan memudahkan pengujian *unit test* tanpa *boilerplate* pewarisan).
+- **Immutable `ScheduleEvent` & `EventType` Enum**: `EventType` mendefinisikan `SCHEDULE_CHANGED` dan `SCHEDULE_DELETED`, dibungkus dalam `@dataclass(frozen=True) class ScheduleEvent` yang membawa `event_id` unik (UUID), `before`, `after`, `meta`, dan `timestamp`. Sifat *frozen* menjamin satu observer tidak dapat memutasi payload event bagi observer berikutnya.
+- **Isolasi Error & Salinan Daftar**: `notify()` mengiterasi salinan daftar (`list(self._observers)`) sehingga `detach()` di tengah jalan tidak merusak perulangan, dan membungkus setiap `observer.update(event)` dengan blok `try ... except Exception` agar kegagalan satu observer tercatat pada `NotifyReport.failed_observers` tanpa membungkam observer berikutnya.
+- **Strategy Kanal & Kunci Idempotensi**: Kanal pengiriman (`EMAIL`, `SMS`, `PUSH`) dimodelkan sebagai objek `LogChannel` berkontrak `send(..., key)` sehingga pergantian ke penyedia SMTP/gateway nyata kelak tidak menyentuh kode observer. Setiap pengiriman membawa kunci idempotensi `f"{event_id}:{recipient}:{channel.name}"` untuk mencegah pesan ganda saat *retry*.
+- **Observer In-Process vs Pub/Sub**: Proyek memilih *Observer in-process* karena seluruh komponen berjalan dalam satu layanan FastAPI, namun penulisan event persisten ke tabel `outbox` menjadi fondasi transisi ke arsitektur *Publish–Subscribe* (Redis/RabbitMQ/Kafka) di masa depan.
 
 | Subscriber (Observer) | Target Penerima | Medium Simulasi | Tujuan Notifikasi |
 | :--- | :--- | :--- | :--- |
-| `StudentObserver` | Seluruh NIM terdampak (`affected_nims`) | `EMAIL`, `PUSH` | Menginformasikan perubahan/penghapusan jadwal dan pengajuan ulang KRS |
-| `LecturerObserver` | Dosen pengampu baru & lama (`dosen`, `old_dosen`) | `EMAIL`, `SMS` | Memberitahu perubahan hari, jam, atau ruangan mengajar |
+| `StudentObserver` | NIM peserta kelas via `ParticipantRepository` / `affected_nims` | `EMAIL`, `PUSH` | Menginformasikan perubahan/penghapusan jadwal dan pengajuan ulang KRS |
+| `LecturerObserver` | Dosen pengampu baru & lama (`after.dosen`, `before.dosen`) | `EMAIL`, `SMS` | Memberitahu perubahan hari, jam, atau ruangan mengajar |
 | `AdminObserver` | `admin.akademik@sevima.ac.id` | `EMAIL`, `SMS`, `PUSH` | Audit perubahan jadwal, jumlah KRS direvisi, dan bentrok terdeteksi |
 
-### 3.16 Hybrid AI-Powered Rescheduler & Conflict Resolver UI
-- **Tiga Constraint Penjadwalan Ulang & Kontrak JSON**: `suggest_alternative_schedules()` (`backend/app/services/schedule_recommender.py`) menghasilkan hingga **3 alternatif jadwal** dengan format `[{hari, jam, ruangan, reason}]` yang wajib memenuhi: (1) `kapasitas >= enrolled`, (2) nol bentrok ruangan maupun jadwal dosen pengampu, serta (3) disrupsi minimal bagi mahasiswa (memprioritaskan slot pagi `07:00–12:00` dan siang `12:00–15:00` serta menghindari jadwal bentrok KRS mahasiswa terkait).
-- **Mode Hybrid (`AI + Rule-Based Fallback`) & Konfigurasi `.env`**: Jika `GEMINI_API_KEY` atau `OPENAI_API_KEY` (beserta `AI_MODEL` opsional) tersedia di `.env`, backend memanggil LLM API via `httpx`; bila key kosong, offline, atau gagal, sistem otomatis beralih ke mesin skor deterministik lokal. Setiap output JSON dari LLM tetap melewati *guardrail* deterministik untuk menolak slot halusinasi yang melanggar kapasitas atau bentrok.
-- **Embedded Conflict Resolver UI (`/dashboard/conflicts`)**: Antarmuka admin disajikan langsung oleh FastAPI (`FileResponse` ke `backend/app/static/conflict_resolver.html`) menggunakan HTML5, CSS3, dan Vanilla JavaScript tanpa pipeline Node.js/React/Vite terpisah, sehingga ringan, nol langkah build tambahan, dan langsung terhubung ke endpoint `/api/schedules/*` serta `/api/schedules/seed-demo`.
+### 3.16 Transactional Outbox & `OutboxDispatcher` (Kirim Setelah Komit)
+- **Mengapa Wajib Dikirim Setelah `COMMIT`**: Mengirim notifikasi sebelum `commit()` menimbulkan dua bahaya: (1) jika server kanal mati, pengecualian membatalkan perubahan jadwal yang sah, dan (2) jika `commit()` gagal/rollback, pengguna sudah terlanjur menerima notifikasi palsu.
+- **Pola Transactional Outbox (`outbox` vs `notifikasi` Minggu 6)**: Tabel `notifikasi` dari Minggu ke-6 tetap dipertahankan sebagai kotak masuk (*inbox*) mahasiswa di database, sedangkan tabel baru `outbox` (`backend/app/models/schedule.py`, migrasi `c3d4e5sch009`) berfungsi sebagai log event handal dengan kolom `event_id` unik, `payload` JSON (`event_type`, `before`, `after`, `meta`), `status` (`pending`/`sent`/`failed`), `attempts`, dan `last_error`.
+- **Atomisitas + *At-Least-Once Delivery* dengan Deduplikasi**: Perubahan/penghapusan `Jadwal`, invalidasi KRS, dan penambahan baris `Outbox` dieksekusi dalam **satu transaksi DB (1× `commit()`)**. Setelah komit berhasil, `OutboxDispatcher.run()` mengunci baris `pending` dengan `.with_for_update(skip_locked=True)` agar aman dari dua worker bersamaan, memanggil `subject.notify(event)`, menandai `sent` bila `report.ok`, atau me-retry maksimal **5 kali** sebelum menjadi `failed`. Kegagalan dispatcher tidak pernah membatalkan perubahan jadwal.
 
-### 3.17 Sinkronisasi Jadwal ke KRS (`invalidate_by_schedule_change -> REVISION`)
-- **Pemeliharaan Invarian State Machine KRS**: Alih-alih menambah status/aktor baru yang melanggar ruang kombinasi state machine KRS (`4 status x 2 aktor`), perubahan atau penghapusan jadwal pada `SchedulingService` memanggil method khusus `KRS.invalidate_by_schedule_change(reason)` dalam satu transaksi ACID.
-- **Kembali ke `REVISION`**: KRS yang berstatus `SUBMITTED`, `APPROVED`, maupun `REVISION` otomatis dikembalikan ke status `REVISION` (`approved_at = None`, `catatan_revisi` diisi keterangan perubahan jadwal, `diubah_pada` diperbarui agar `version` naik), disertai pencatatan `KRSLog` dan `Notifikasi` agar mahasiswa langsung mengetahui alasan dan dapat mengajukan ulang lewat `KRSManager`.
+### 3.17 Sinkronisasi Jadwal ke KRS via `Actor.SYSTEM` & Satu Pintu `transition()`
+- **Penambahan `Actor.SYSTEM` pada State Machine**: Alih-alih membuat jalan pintas yang mem-bypass `TRANSITIONS`, `Actor` di `backend/app/models/krs.py` diperluas dengan `Actor.SYSTEM` dan dua transisi resmi baru: `(KRSStatus.SUBMITTED, Actor.SYSTEM) -> KRSStatus.REVISION` dan `(KRSStatus.APPROVED, Actor.SYSTEM) -> KRSStatus.REVISION`.
+- **Satu Pintu `transition()` & Ruang Kombinasi 48 Kasus**: Method `KRS.invalidate_by_schedule_change(reason)` kini mendelegasikan langsung ke `self.transition(KRSStatus.REVISION, actor=Actor.SYSTEM, catatan=reason)` (mengosongkan `approved_at = None` dan mengisi `catatan_revisi`), sementara `DRAFT` dan `REVISION` tidak disentuh. Konsekuensinya, uji parametrisasi di `backend/tests/test_krs_property.py` diperbarui menjadi $4 \times 4 \times 3 = 48$ kombinasi (**6 sah** dan **42 ilegal**). Invalidator ikut di dalam transaksi `SchedulingService` tanpa melakukan `commit()` sendiri.
+
+### 3.18 AI Rescheduler (`LLMClient` + 4 Saringan), Conflict Resolver UI Satu Pintu, & RBAC
+- **Abstraksi `LLMClient` & Determinisme Slot**: Pemanggilan LLM dibungkus di balik `Protocol LLMClient` dengan method `complete(prompt) -> str` (`GeminiLLMClient` dengan JSON mode `responseMimeType: "application/json"`, `OpenRouterLLMClient`, `OpenAILLMClient`, dan `FakeLLMClient` untuk CI test deterministik tanpa panggilan API nyata). Daftar slot tersedia dihitung secara deterministik oleh backend dari matriks hari/jam/ruangan dikurangi jadwal terisi — **tidak pernah dikarang oleh AI**.
+- **Empat Saringan Ketat Atas Keluaran AI (`filter_ai_suggestions`)**:
+  1. **Saringan 1 (Parsing):** Mengekstrak substring di antara `[` pertama dan `]` terakhir; JSON rusak mengembalikan `[]` tanpa crash.
+  2. **Saringan 2 (Skema Pydantic):** Validasi tiap item dengan `AISuggestionItem` (`hari` 1–6, format jam `datetime.time` sah); item rusak dibuang per item.
+  3. **Saringan 3 (Ruangan & Kapasitas):** Ruangan wajib ada di database dan `kapasitas >= enrolled_count`.
+  4. **Saringan 4 (Deteksi Bentrok Ulang):** Membentuk calon `JadwalSlot(id=-1, ...)` dan memanggil `detect_conflicts_sweep()`; jika `-1` muncul di konflik, saran dibuang. Hanya maks. 3 saran tervalidasi yang dikembalikan (dengan *rule-based fallback* opsional pada mode interaktif).
+- **Conflict Resolver UI Satu Pintu & RBAC Admin Akademik**: Halaman `/dashboard/conflicts` (`backend/app/static/conflict_resolver.html`) menyediakan login Admin Akademik (`POST /api/auth/login`), daftar bentrok, rekomendasi AI, serta tabel status *Outbox*. Tombol *"Terapkan Jadwal"* memanggil `PUT /api/schedules/{id}` yang sama (prinsip satu pintu: cek bentrok ulang `409` bila slot keburu terisi, invalidasi KRS, tulis Outbox, kirim notifikasi). Seluruh endpoint manajemen `/api/schedules/*` diproteksi dependensi JWT `require_admin_akademik` (`401`/`403`).
+
+### 3.19 Ekspor Kalender Perkuliahan (iCalendar `.ics`)
+- **Standar RFC 5545 tanpa Dependensi Eksternal Tambahan**: `backend/app/services/calendar_exporter.py` dan endpoint `GET /api/schedules/export.ics` (mendukung filter `?semester=` dan `?nim=`) mengekspor jadwal ke berkas `.ics` yang kompatibel dengan Google Calendar dan kalender ponsel.
+- **Detail Protokol & Sinkronisasi**:
+  - Pemisah baris wajib `CRLF` (`\r\n`) dan blok `VTIMEZONE` `Asia/Jakarta`.
+  - `UID` stabil (`jadwal-{id}@sevima-mini.ac.id`) dan kolom `jadwal.sequence` (dinaikkan tiap kali jadwal diubah via `update_schedule`) agar impor ulang memperbarui event lama tanpa duplikasi.
+  - `DTSTART`/`DTEND` dihitung dari tanggal pertemuan pertama sesuai awal semester dan hari kuliah, dilengkapi `RRULE:FREQ=WEEKLY;UNTIL=...Z` (konversi akhir semester ke UTC berakhiran `Z` sesuai RFC 5545 saat `DTSTART` memakai `TZID`).
 
 ## 4. Trade-off yang Dipertimbangkan
 1. **Inheritance & Polymorphism vs Flat Database Models**
@@ -150,13 +169,22 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 8. **Hybrid AI Rescheduler + Guardrail Deterministik vs Ketergantungan Penuh pada LLM**
    - *Kelebihan*: Tetap menghasilkan 3 rekomendasi valid secara offline dan deterministik saat pengujian maupun tanpa API key, serta melindungi Admin dari saran jadwal bentrok akibat halusinasi LLM.
    - *Kekurangan*: Penjelasan (`reason`) pada mode fallback lebih terstruktur/templat dibandingkan kalimat bebas dari LLM.
-9. **Invalidasi KRS ke Status `REVISION` vs Status Terpisah `INVALIDATED`**
-   - *Kelebihan*: Mahasiswa dapat langsung memperbarui dan mengajukan ulang KRS melalui alur `KRSManager` (`REVISION -> SUBMITTED`) tanpa memperbesar tabel transisi state machine maupun merusak pengujian 28 transisi ilegal.
-   - *Kekurangan*: Pembedaan antara revisi oleh Dosen PA dan revisi akibat perubahan jadwal bergantung pada `catatan_revisi` serta riwayat `KRSLog` (`invalidate_schedule_change`).
+9. **Invalidasi KRS ke Status `REVISION` via `Actor.SYSTEM` vs Status Terpisah `INVALIDATED`**
+   - *Kelebihan*: Tetap menjaga prinsip satu pintu `KRS.transition()` dan seluruh aturan tercatat di `TRANSITIONS` ($4 \times 4 \times 3 = 48$ kombinasi: 6 sah, 42 ilegal), sekaligus memungkinkan mahasiswa langsung mengajukan ulang KRS (`REVISION -> SUBMITTED`) tanpa memperbanyak state kartu KRS.
+   - *Kekurangan*: Memerlukan pembaruan uji parametrisasi transisi ilegal dari 28 menjadi 42 kombinasi serta pembedaan antara revisi Dosen PA dan revisi sistem melalui `catatan_revisi` serta `KRSLog`.
 10. **Grouping + Sort & Sweep vs Naive vs Interval Tree untuk Deteksi Bentrok Jadwal**
     - *Kelebihan*: Pengelompokan `(hari, ruangan_kode)` & `(hari, dosen_id)` diikuti *Sort & Sweep* menyapu ~600 jadwal kampus hanya dalam **0,60 ms** (vs **5,22 ms** pada *Naive*), tanpa dependensi eksternal maupun kerumitan penyeimbangan *tree*, sementara versi *Naive* tetap dipertahankan sebagai *oracle* pada *differential testing* Hypothesis (`Counter(sweep) == Counter(naive)`).
     - *Kekurangan*: Jika kelak sistem menangani pencarian interval dinamis berskala jutaan data atau *CSP solver* ribuan kandidat per detik, struktur indeks berbasis *Interval Tree* tetap perlu dipertimbangkan ulang.
 11. **Embedded Admin Dashboard HTML/JS vs SPA Frontend Terpisah (React/Vite)**
     - *Kelebihan*: Nol dependensi frontend tambahan, langsung aktif saat `uvicorn` dijalankan di `/dashboard/conflicts`, dan mudah diuji end-to-end langsung lewat FastAPI `TestClient`.
     - *Kekurangan*: Tidak memiliki manajemen state atau komponen modular skala besar seperti React/Vue apabila UI berkembang menjadi portal multi-halaman kompleks.
+12. **Transactional Outbox (`outbox` + `OutboxDispatcher`) vs Pemanggilan `notify()` Langsung Setelah `commit()`**
+    - *Kelebihan*: Menjamin event tidak pernah hilang apabila aplikasi crash tepat setelah `commit()`, mendukung *retry* otomatis hingga 5× dengan *idempotency key* (deduplikasi), aman dari worker ganda via `SKIP LOCKED`, serta mempertahankan tabel `notifikasi` sebagai kotak masuk mahasiswa.
+    - *Kekurangan*: Menambah satu tabel dan langkah migrasi (`c3d4e5sch009`) serta eksekusi dispatcher setelah komit.
+13. **`typing.Protocol` vs `ABC` untuk Kontrak Observer, Channel, & `LLMClient`**
+    - *Kelebihan*: Mendukung *structural subtyping* (*duck typing* bertipe aman) sehingga `SpyObserver`, `BrokenObserver`, dan `FakeLLMClient` dapat ditulis ringkas tanpa mewarisi kelas abstrak tertentu.
+    - *Kekurangan*: Pelanggaran tanda tangan method hanya terdeteksi saat pemeriksaan tipe statis (`mypy`/`pyright`) atau saat `update()`/`complete()` dipanggil, bukan saat instansiasi kelas seperti `ABC`.
+14. **Generator iCalendar `.ics` Murni Python vs Library Eksternal (`icalendar`)**
+    - *Kelebihan*: `+0` dependensi tambahan untuk format teks RFC 5545 yang relatif kecil (`VCALENDAR`/`VEVENT`/`VTIMEZONE`), serta memberi kendali penuh atas pemisah baris `CRLF` (`\r\n`), `UID`, `SEQUENCE`, dan format UTC `UNTIL`.
+    - *Kekurangan*: Jika kelak dibutuhkan fitur iCalendar tingkat lanjut (seperti pengecualian tanggal libur `EXDATE` atau zona waktu DST dinamis lintas negara), pemakaian library `icalendar` + `dateutil` akan lebih hemat usaha.
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import time
+from datetime import datetime, time
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -140,6 +140,7 @@ class ScheduleResponse(BaseModel):
     jam_selesai: str
     jam: str
     enrolled_count: int
+    sequence: int = 0
 
 
 class ScheduleMutationResponse(BaseModel):
@@ -147,6 +148,7 @@ class ScheduleMutationResponse(BaseModel):
     invalidated_krs_nims: list[str] = Field(default_factory=list)
     notifications_sent: list[dict[str, Any]] = Field(default_factory=list)
     conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    outbox_event_id: str | None = None
 
 
 class ScheduleDeleteResponse(BaseModel):
@@ -154,6 +156,7 @@ class ScheduleDeleteResponse(BaseModel):
     deleted_schedule_id: int
     invalidated_krs_nims: list[str] = Field(default_factory=list)
     notifications_sent: list[dict[str, Any]] = Field(default_factory=list)
+    outbox_event_id: str | None = None
 
 
 class ConflictDetectItem(BaseModel):
@@ -221,3 +224,21 @@ class RescheduleSuggestionResponse(BaseModel):
 class NotificationLogResponse(BaseModel):
     total: int
     logs: list[dict[str, Any]]
+
+
+class OutboxItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    event_id: str
+    payload: dict[str, Any]
+    status: str
+    attempts: int
+    last_error: str | None = None
+    created_at: datetime
+    processed_at: datetime | None = None
+
+
+class OutboxListResponse(BaseModel):
+    total: int
+    items: list[OutboxItemResponse]

@@ -295,20 +295,58 @@
       border: 1px solid var(--border);
       border-radius: 8px;
     }
+
+    .auth-bar {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 10px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 0.84rem;
+    }
+    .auth-form {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .auth-form input {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #f8fafc;
+      font-size: 0.82rem;
+    }
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1>Conflict Resolver &amp; Scheduling Dashboard</h1>
-      <p>Sevima-Mini (Minggu 7–8): Deteksi Bentrok 3D, Observer Pattern, AI Rescheduling, &amp; Sinkronisasi KRS</p>
+      <p>Sevima-Mini (Minggu 7–8): Deteksi Bentrok 3D, Observer + Transactional Outbox, AI Rescheduling, RBAC Admin, &amp; Ekspor .ics</p>
     </div>
     <div class="header-actions">
       <button class="btn btn-success" onclick="seedDemo()">Muat Data Demo Bentrok</button>
       <button class="btn btn-secondary" onclick="loadAll()">Refresh Data</button>
+      <a class="btn btn-secondary" href="/api/schedules/export.ics" target="_blank">Ekspor Kalender (.ics)</a>
       <a class="btn btn-secondary" href="/docs" target="_blank">Swagger API Docs</a>
     </div>
   </header>
+  <div class="auth-bar">
+    <form class="auth-form" onsubmit="loginAdmin(event)">
+      <strong>Login Admin Akademik (RBAC JWT):</strong>
+      <input id="auth-email" type="email" value="admin.akademik@sevima.ac.id" placeholder="Email Admin" required />
+      <input id="auth-password" type="password" value="admin123" placeholder="Password" required />
+      <button type="submit" class="btn btn-primary btn-sm">Login Admin</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="logoutAdmin()">Logout</button>
+    </form>
+    <span id="auth-status-badge" class="badge badge-time">Belum Login</span>
+  </div>
 
   <main class="container">
     <div id="toast" class="toast"></div>
@@ -435,7 +473,7 @@
         <div class="card-header">
           <div>
             <h2 class="card-title">Log Notifikasi Observer Pattern</h2>
-            <p class="card-subtitle">Simulasi Email / SMS / Push untuk Mahasiswa, Dosen, &amp; Admin</p>
+            <p class="card-subtitle">Simulasi Email / SMS / Push dengan Idempotency Key (dikirim setelah komit via Outbox)</p>
           </div>
         </div>
         <div class="log-feed">
@@ -453,10 +491,51 @@
         </div>
       </div>
     </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Status Transactional Outbox</h2>
+          <p class="card-subtitle">Event ditulis satu transaksi dengan perubahan jadwal &amp; KRS, lalu diproses oleh OutboxDispatcher setelah komit</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="dispatchOutbox()">Proses Outbox Pending</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Event ID</th>
+              <th>Event Type</th>
+              <th>Status</th>
+              <th>Attempts</th>
+              <th>Catatan / Error</th>
+            </tr>
+          </thead>
+          <tbody id="outbox-tbody"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <script>
     const API = "/api/schedules";
+    const TOKEN_KEY = "sevima_admin_token";
+
+    function getToken() {
+      return sessionStorage.getItem(TOKEN_KEY) || "";
+    }
+
+    function updateAuthBadge() {
+      const badge = document.getElementById("auth-status-badge");
+      if (getToken()) {
+        badge.className = "badge badge-ok";
+        badge.textContent = "Admin Akademik Aktif (JWT)";
+      } else {
+        badge.className = "badge badge-time";
+        badge.textContent = "Belum Login";
+      }
+    }
 
     function escapeHtml(str) {
       return String(str ?? "")
@@ -475,15 +554,54 @@
     }
 
     async function apiFetch(url, options = {}) {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      };
+      const token = getToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
       const resp = await fetch(url, {
-        headers: { "Content-Type": "application/json" },
         ...options,
+        headers,
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        throw new Error(data.detail || `HTTP ${resp.status}`);
+        const err = new Error(data.detail || `HTTP ${resp.status}`);
+        err.status = resp.status;
+        throw err;
       }
       return data;
+    }
+
+    async function loginAdmin(event) {
+      if (event) event.preventDefault();
+      const email = document.getElementById("auth-email").value.trim();
+      const password = document.getElementById("auth-password").value;
+      try {
+        const resp = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data.detail || `HTTP ${resp.status}`);
+        }
+        sessionStorage.setItem(TOKEN_KEY, data.access_token);
+        updateAuthBadge();
+        showToast("Login Admin Akademik berhasil.", "success");
+        await loadAll();
+      } catch (err) {
+        showToast(`Login gagal: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
+    function logoutAdmin() {
+      sessionStorage.removeItem(TOKEN_KEY);
+      updateAuthBadge();
+      showToast("Sesi Admin Akademik telah keluar.", "success");
     }
 
     function conflictBadge(type) {
@@ -583,7 +701,7 @@
 
       try {
         const data = await apiFetch(`${API}/${scheduleId}/suggest-alternatives`, { method: "POST" });
-        subtitle.textContent = `Alternatif untuk ${data.schedule.nama_mk} (${data.schedule.hari_nama} ${data.schedule.jam}, Ruang ${data.schedule.ruangan})`;
+        subtitle.textContent = `Alternatif untuk ${data.schedule.nama_mk} (${data.schedule.hari_nama} ${data.schedule.jam}, Ruang ${data.schedule.ruangan_kode || data.schedule.ruangan})`;
         badge.style.display = "inline-block";
         badge.textContent = data.source === "ai" ? "LLM AI" : (data.source === "ai_with_fallback" ? "Hybrid AI + Fallback" : "Hybrid Fallback Engine");
 
@@ -632,7 +750,14 @@
         document.getElementById("recommendations-container").innerHTML = '<div class="empty-state">Jadwal sudah diperbarui. Klik <strong>Saran Alternatif AI</strong> jika masih ada bentrok lain.</div>';
         await loadAll();
       } catch (err) {
-        showToast(`Gagal menerapkan jadwal: ${escapeHtml(err.message)}`, "error");
+        if (err.status === 409) {
+          showToast(
+            `Slot sudah terisi atau terjadi bentrok baru (409): ${escapeHtml(err.message)}. Silakan muat ulang saran alternatif.`,
+            "error"
+          );
+        } else {
+          showToast(`Gagal menerapkan jadwal: ${escapeHtml(err.message)}`, "error");
+        }
       }
     }
 
@@ -681,14 +806,52 @@
       }
     }
 
+    function renderOutbox(items) {
+      const tbody = document.getElementById("outbox-tbody");
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748b;">Belum ada baris Transactional Outbox.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = items.map((row) => {
+        const badgeClass = row.status === "sent" ? "badge-ok" : (row.status === "failed" ? "badge-room" : "badge-lecturer");
+        const evType = (row.payload && row.payload.event_type) ? row.payload.event_type : "-";
+        return `
+          <tr>
+            <td>#${Number(row.id)}</td>
+            <td style="font-family:monospace;font-size:0.78rem;">${escapeHtml(row.event_id)}</td>
+            <td><span class="badge badge-time">${escapeHtml(evType)}</span></td>
+            <td><span class="badge ${badgeClass}">${escapeHtml(row.status)}</span></td>
+            <td>${Number(row.attempts)}</td>
+            <td style="font-size:0.8rem;color:#475569;">${escapeHtml(row.last_error || "Terkirim")}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function dispatchOutbox() {
+      try {
+        const res = await apiFetch(`${API}/outbox/dispatch`, { method: "POST" });
+        showToast(`Outbox diproses: picked=${res.picked}, sent=${res.sent}, retried=${res.retried}, failed=${res.failed}.`, "success");
+        await loadAll();
+      } catch (err) {
+        showToast(`Gagal memproses outbox: ${escapeHtml(err.message)}`, "error");
+      }
+    }
+
     async function loadAll() {
-      const [rooms, classes, lecturers, schedules, conflictsRes, logsRes] = await Promise.all([
+      updateAuthBadge();
+      if (!getToken()) {
+        showToast("Silakan klik 'Login Admin' pada bilah autentikasi untuk mengakses API Admin Akademik.", "error");
+        return;
+      }
+      const [rooms, classes, lecturers, schedules, conflictsRes, logsRes, outboxRes] = await Promise.all([
         apiFetch(`${API}/rooms`),
         apiFetch(`${API}/classes`),
         apiFetch(`${API}/lecturers`),
         apiFetch(`${API}`),
         apiFetch(`${API}/conflicts`),
         apiFetch(`${API}/notifications`),
+        apiFetch(`${API}/outbox`),
       ]);
 
       document.getElementById("kpi-rooms").textContent = rooms.length;
@@ -705,9 +868,15 @@
       renderSchedules(schedules);
       renderConflicts(conflictsRes.conflicts || []);
       renderLogs(logsRes.logs || []);
+      renderOutbox(outboxRes.items || []);
     }
 
-    loadAll().catch((err) => showToast(`Gagal memuat data awal: ${escapeHtml(err.message)}`, "error"));
+    updateAuthBadge();
+    if (getToken()) {
+      loadAll().catch((err) => showToast(`Gagal memuat data awal: ${escapeHtml(err.message)}`, "error"));
+    } else {
+      showToast("Silakan login sebagai Admin Akademik terlebih dahulu (demo: admin.akademik@sevima.ac.id / admin123).", "error");
+    }
   </script>
 </body>
 </html>

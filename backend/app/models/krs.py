@@ -134,6 +134,7 @@ class KRSStatus(str, enum.Enum):
 class Actor(str, enum.Enum):
     MAHASISWA = "mahasiswa"
     DOSEN_PA = "dosen_pa"
+    SYSTEM = "system"
 
 
 def _normalize_actor(actor: Actor | str) -> Actor:
@@ -145,6 +146,8 @@ def _normalize_actor(actor: Actor | str) -> Actor:
         return Actor.MAHASISWA
     if normalized in ("dosen_pa", "dosen"):
         return Actor.DOSEN_PA
+    if normalized in ("system", "sistem"):
+        return Actor.SYSTEM
     raise KRSForbiddenError(f"Aktor tidak dikenal: {actor}")
 
 
@@ -153,6 +156,8 @@ TRANSITIONS: dict[tuple[KRSStatus, Actor], set[KRSStatus]] = {
     (KRSStatus.DRAFT, Actor.MAHASISWA): {KRSStatus.SUBMITTED},
     (KRSStatus.SUBMITTED, Actor.DOSEN_PA): {KRSStatus.APPROVED, KRSStatus.REVISION},
     (KRSStatus.REVISION, Actor.MAHASISWA): {KRSStatus.SUBMITTED},
+    (KRSStatus.SUBMITTED, Actor.SYSTEM): {KRSStatus.REVISION},
+    (KRSStatus.APPROVED, Actor.SYSTEM): {KRSStatus.REVISION},
 }
 
 
@@ -251,12 +256,18 @@ class KRS(Base):
                 )
 
         if target == KRSStatus.REVISION:
-            if catatan is not None and not catatan.strip():
-                raise KRSError("Catatan revisi wajib diisi oleh Dosen PA")
-            if catatan is not None:
+            if actor_enum == Actor.SYSTEM:
+                if not catatan or not catatan.strip():
+                    raise KRSError("Alasan invalidasi jadwal wajib diisi")
                 self.catatan_revisi = catatan.strip()
-            elif not self.catatan_revisi:
-                raise KRSError("Catatan revisi wajib diisi oleh Dosen PA")
+                self.approved_at = None
+            else:
+                if catatan is not None and not catatan.strip():
+                    raise KRSError("Catatan revisi wajib diisi oleh Dosen PA")
+                if catatan is not None:
+                    self.catatan_revisi = catatan.strip()
+                elif not self.catatan_revisi:
+                    raise KRSError("Catatan revisi wajib diisi oleh Dosen PA")
 
         if target == KRSStatus.APPROVED:
             self.approved_at = now
@@ -270,19 +281,12 @@ class KRS(Base):
         return self.status
 
     def invalidate_by_schedule_change(self, reason: str) -> KRSStatus:
-        """Mengembalikan status KRS ke REVISION saat jadwal mata kuliah berubah/dihapus."""
-        if not reason or not reason.strip():
-            raise KRSError("Alasan invalidasi jadwal wajib diisi")
-
-        self.catatan_revisi = reason.strip()
-        self.approved_at = None
-        self.diubah_pada = datetime.now(timezone.utc)
-        self._allow_status_change = True
-        try:
-            self.status = KRSStatus.REVISION
-        finally:
-            self._allow_status_change = False
-        return self.status
+        """Mengembalikan status KRS ke REVISION lewat satu pintu transition() dengan Actor.SYSTEM."""
+        return self.transition(
+            KRSStatus.REVISION,
+            actor=Actor.SYSTEM,
+            catatan=reason,
+        )
 
 
 class KRSDetail(Base):

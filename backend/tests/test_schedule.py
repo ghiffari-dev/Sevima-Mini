@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import FrozenInstanceError
 from datetime import date, time
 import json
 import logging
@@ -15,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 from app.core.database import get_db as get_orm_db
+from app.core.security import create_access_token
 from app.main import app
 from app.models.base import Base
 from app.models.calon_mahasiswa import CalonMahasiswa
@@ -34,6 +36,8 @@ from app.models.schedule import (
     Dosen,
     Jadwal,
     Kelas,
+    Outbox,
+    OutboxStatus,
     Ruangan,
     ScheduleCapacityError,
     ScheduleConflictError,
@@ -51,13 +55,22 @@ from app.services.conflict_detector import (
 from app.services.krs_manager import KRSManager
 from app.services.schedule_observer import (
     AdminObserver,
+    EventType,
     LecturerObserver,
+    LogChannel,
     NotificationManager,
+    OutboxDispatcher,
+    ScheduleEvent,
+    ScheduleObserver,
     ScheduleSubject,
     StudentObserver,
     default_notification_manager,
 )
-from app.services.schedule_recommender import suggest_alternative_schedules
+from app.services.schedule_recommender import (
+    FakeLLMClient,
+    recommend_with_llm,
+    suggest_alternative_schedules,
+)
 from app.services.scheduling_service import SchedulingService
 
 
@@ -369,9 +382,17 @@ def test_observer_pattern_attach_detach_and_simulated_logs(
 ) -> None:
     caplog.set_level(logging.INFO, logger="schedule.notifications")
     subject = ScheduleSubject()
-    student_obs = StudentObserver()
-    lecturer_obs = LecturerObserver()
-    admin_obs = AdminObserver()
+    email_ch = LogChannel("EMAIL", history=subject.history)
+    sms_ch = LogChannel("SMS", history=subject.history)
+    push_ch = LogChannel("PUSH", history=subject.history)
+
+    student_obs = StudentObserver(channels=[email_ch, push_ch])
+    lecturer_obs = LecturerObserver(channels=[email_ch, sms_ch])
+    admin_obs = AdminObserver(channels=[email_ch, sms_ch, push_ch])
+
+    assert isinstance(student_obs, ScheduleObserver)
+    assert isinstance(lecturer_obs, ScheduleObserver)
+    assert isinstance(admin_obs, ScheduleObserver)
 
     subject.attach(student_obs)
     subject.attach(student_obs)  # idempoten
@@ -379,22 +400,34 @@ def test_observer_pattern_attach_detach_and_simulated_logs(
     subject.attach(admin_obs)
     assert len(subject.observers) == 3
 
-    records = subject.notify(
-        "SCHEDULE_CHANGED",
-        {
+    event_obj = ScheduleEvent(
+        event_type=EventType.SCHEDULE_CHANGED,
+        before={
             "kode_mk": "MA101",
             "nama_mk": "Kalkulus I",
-            "hari": "Selasa",
+            "hari_nama": "Senin",
             "jam": "08:00-10:00",
-            "ruangan": "A102",
+            "ruangan_kode": "A101",
             "dosen": "Dr. Budi",
+        },
+        after={
+            "kode_mk": "MA101",
+            "nama_mk": "Kalkulus I",
+            "hari_nama": "Selasa",
+            "jam": "08:00-10:00",
+            "ruangan_kode": "A102",
+            "dosen": "Dr. Budi",
+        },
+        meta={
             "affected_nims": ["2025001-0001"],
             "invalidated_krs_ids": [1],
         },
     )
+    report = subject.notify(event_obj)
+    assert report.ok is True
 
-    observers_hit = {r.observer for r in records}
-    media_hit = {r.medium for r in records}
+    observers_hit = {r.observer for r in report.records}
+    media_hit = {r.medium for r in report.records}
     assert observers_hit == {"StudentObserver", "LecturerObserver", "AdminObserver"}
     assert media_hit == {"EMAIL", "SMS", "PUSH"}
 
@@ -406,8 +439,8 @@ def test_observer_pattern_attach_detach_and_simulated_logs(
 
     subject.detach(admin_obs)
     assert len(subject.observers) == 2
-    records_after = subject.notify(
-        "SCHEDULE_CHANGED",
+    report_after = subject.notify(
+        EventType.SCHEDULE_CHANGED,
         {
             "kode_mk": "MA101",
             "nama_mk": "Kalkulus I",
@@ -417,16 +450,102 @@ def test_observer_pattern_attach_detach_and_simulated_logs(
             "dosen": "Dr. Budi",
         },
     )
-    assert "AdminObserver" not in {r.observer for r in records_after}
+    assert "AdminObserver" not in {r.observer for r in report_after.records}
 
     mgr = NotificationManager()
     mgr.notify(
-        "SCHEDULE_CHANGED",
+        EventType.SCHEDULE_CHANGED,
         {"kode_mk": "IF201", "nama_mk": "Basis Data", "dosen": "Dr. Siti"},
     )
     assert len(mgr.get_logs()) > 0
     mgr.clear_logs()
     assert mgr.get_logs() == []
+
+
+def test_spy_observer_dipanggil_tepat_sekali_saat_attach_ganda_dan_frozen_event() -> None:
+    """Tes #1 Minggu 8: SpyObserver di-attach 2x tetap hanya menerima tepat 1 event; ScheduleEvent frozen."""
+
+    class SpyObserver:
+        def __init__(self) -> None:
+            self.events: list[ScheduleEvent] = []
+
+        def update(self, event: ScheduleEvent) -> list:
+            self.events.append(event)
+            return []
+
+    spy = SpyObserver()
+    assert isinstance(spy, ScheduleObserver)
+
+    subject = ScheduleSubject()
+    subject.attach(spy)
+    subject.attach(spy)  # sengaja attach dua kali
+    assert len(subject.observers) == 1
+
+    ev = ScheduleEvent(
+        event_type=EventType.SCHEDULE_CHANGED,
+        before={"hari_nama": "Senin", "jam": "08:00-10:00", "ruangan_kode": "A101"},
+        after={"hari_nama": "Rabu", "jam": "13:00-15:00", "ruangan_kode": "A102"},
+    )
+    with pytest.raises(FrozenInstanceError):
+        ev.event_type = EventType.SCHEDULE_DELETED  # type: ignore[misc]
+
+    report = subject.notify(ev)
+    assert report.ok is True
+    assert len(spy.events) == 1
+    assert spy.events[0] == ev
+
+    # Detach di tengah notify tidak merusak perulangan
+    class SelfDetachingObserver:
+        def __init__(self, subj: ScheduleSubject) -> None:
+            self.subj = subj
+            self.called = 0
+
+        def update(self, event: ScheduleEvent) -> None:
+            self.called += 1
+            self.subj.detach(self)
+
+    subject2 = ScheduleSubject()
+    self_detacher = SelfDetachingObserver(subject2)
+    subject2.attach(self_detacher)
+    subject2.attach(spy)
+    subject2.notify(ev)
+    assert self_detacher.called == 1
+    assert len(spy.events) == 2
+    assert len(subject2.observers) == 1
+
+
+def test_observer_gagal_tidak_menghentikan_observer_berikutnya() -> None:
+    """Tes #2 Minggu 8: BrokenObserver di depan tidak menghentikan SpyObserver dan dilaporkan di NotifyReport."""
+
+    class BrokenObserver:
+        def update(self, event: ScheduleEvent) -> list:
+            raise RuntimeError("Server SMS tidak dapat dihubungi")
+
+    class SpyObserver:
+        def __init__(self) -> None:
+            self.events: list[ScheduleEvent] = []
+
+        def update(self, event: ScheduleEvent) -> list:
+            self.events.append(event)
+            return []
+
+    broken = BrokenObserver()
+    spy = SpyObserver()
+
+    subject = ScheduleSubject()
+    subject.attach(broken)
+    subject.attach(spy)
+
+    report = subject.notify(
+        ScheduleEvent(
+            event_type=EventType.SCHEDULE_CHANGED,
+            before={"hari_nama": "Senin"},
+            after={"hari_nama": "Rabu"},
+        )
+    )
+    assert report.ok is False
+    assert report.failed_observers == ["BrokenObserver"]
+    assert len(spy.events) == 1
 
 
 # =====================================================================
@@ -544,6 +663,74 @@ def test_ai_rescheduler_hybrid_guardrail_rejects_hallucinated_slot(
     assert first["ruangan"] == "A102"
     assert first["reason"] == "AI valid slot"
     assert all(r["ruangan"] != "Lab-Kecil" for r in res["recommendations"])
+
+
+def test_ai_rescheduler_four_filters_with_fake_llm() -> None:
+    """Tes #4 Minggu 8: FakeLLM mengembalikan 3 saran (1 valid, 1 ruangan fiktif, 1 bentrok) -> tepat 1 lolos."""
+    conflicted = {
+        "id": 1,
+        "kode_mk": "MA101",
+        "nama_mk": "Kalkulus I",
+        "hari": "Senin",
+        "jam_mulai": "08:00",
+        "jam_selesai": "10:00",
+        "ruangan": "A101",
+        "dosen": "Dr. Budi",
+        "enrolled_count": 40,
+    }
+    existing = [
+        conflicted,
+        {
+            "id": 2,
+            "kode_mk": "IF201",
+            "nama_mk": "Basis Data",
+            "hari": "Selasa",
+            "jam_mulai": "08:00",
+            "jam_selesai": "10:00",
+            "ruangan": "A102",
+            "dosen": "Dr. Siti",
+            "enrolled_count": 30,
+        },
+    ]
+    rooms = [
+        {"kode": "A101", "kapasitas": 40},
+        {"kode": "A102", "kapasitas": 45},
+    ]
+
+    # 1 valid, 1 ruangan fiktif ("Z999"), 1 bentrok dengan IF201 di Selasa 08:00-10:00
+    fake_json = (
+        "Berikut rekomendasinya:\n"
+        + json.dumps(
+            [
+                {"hari": "Rabu", "jam": "08:00-10:00", "ruangan": "A102", "reason": "Slot pagi aman"},
+                {"hari": "Kamis", "jam": "08:00-10:00", "ruangan": "Z999", "reason": "Ruangan fiktif"},
+                {"hari": "Selasa", "jam": "08:00-10:00", "ruangan": "A102", "reason": "Bentrok ruang"},
+            ]
+        )
+    )
+    fake_llm = FakeLLMClient(fake_json)
+    results = recommend_with_llm(conflicted, existing, rooms, llm_client=fake_llm, top_k=3)
+    assert len(results) == 1
+    assert results[0]["hari"] == "Rabu"
+    assert results[0]["ruangan"] == "A102"
+    assert fake_llm.last_prompt is not None
+
+    # JSON tidak valid -> kembalikan [] tanpa crash
+    bad_llm = FakeLLMClient("Maaf, tidak ada JSON di sini")
+    assert recommend_with_llm(conflicted, existing, rooms, llm_client=bad_llm) == []
+
+    # Satu item skema Pydantic rusak dibuang tanpa menggugurkan item valid di sampingnya
+    mixed_llm = FakeLLMClient(
+        json.dumps(
+            [
+                {"hari": 99, "jam": "jam-ngaco", "ruangan": "", "reason": "Rusak"},
+                {"hari": "Kamis", "jam": "10:00-12:00", "ruangan": "A102", "reason": "Valid"},
+            ]
+        )
+    )
+    mixed = recommend_with_llm(conflicted, existing, rooms, llm_client=mixed_llm)
+    assert len(mixed) == 1
+    assert mixed[0]["hari"] == "Kamis"
 
 
 # =====================================================================
@@ -747,15 +934,153 @@ def test_schedule_update_and_delete_invalidate_affected_krs_to_revision(
         assert k1_after is not None and k1_after.status == KRSStatus.REVISION
 
 
+def test_integration_update_jadwal_krs_rina_revision_dan_satu_outbox_serta_dispatcher(
+    db_session_and_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tes #3 Minggu 8: KRS APPROVED Rina -> REVISION via Actor.SYSTEM, DRAFT/REVISION utuh, & 1 baris Outbox."""
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.sql.selectable import Select
+
+    TestingSessionLocal, _ = db_session_and_client
+    notif_mgr = NotificationManager()
+
+    with TestingSessionLocal() as db:
+        k_ma = db.scalars(select(Kelas).where(Kelas.kode_mk == "MA101")).first()
+        d1 = db.scalars(select(Dosen).where(Dosen.nidn == "0010018001")).first()
+        assert k_ma and d1
+
+        mgr = KRSManager(db, semester="20251", dosen_pa_id=10)
+        # Rina (2025001-0001): APPROVED
+        mgr.add_course("2025001-0001", "MA101", kelas_id=k_ma.id)
+        krs_rina = mgr.submit_krs("2025001-0001")
+        mgr.approve_krs("2025001-0001", dosen_pa_id=10, version=krs_rina.version)
+
+        # Dimas (2025001-0002): DRAFT (tidak boleh disentuh)
+        mgr.add_course("2025001-0002", "MA101", kelas_id=k_ma.id)
+
+        # Sari (2025001-0003): REVISION awal dari Dosen PA (catatan tetap utuh)
+        mgr.add_course("2025001-0003", "MA101", kelas_id=k_ma.id)
+        krs_sari = mgr.submit_krs("2025001-0003")
+        mgr.revise_krs(
+            "2025001-0003",
+            dosen_pa_id=10,
+            catatan="Catatan awal dosen PA",
+            version=krs_sari.version,
+        )
+
+        sched_svc = SchedulingService(db, notification_manager=notif_mgr)
+        created = sched_svc.create_schedule(
+            kelas_id=k_ma.id,
+            ruangan_kode="A101",
+            dosen_id=d1.id,
+            hari=1,
+            jam_mulai="08:00",
+            jam_selesai="10:00",
+        )
+        sched_id = created["schedule"]["id"]
+        assert db.scalars(select(Outbox)).all() == []
+
+        # Update dengan dispatch_now=False untuk membuktikan baris outbox ditulis atomik dalam transaksi yang sama
+        upd = sched_svc.update_schedule(
+            sched_id,
+            ruangan_kode="A102",
+            hari=3,
+            jam_mulai="10:00",
+            jam_selesai="12:00",
+            dispatch_now=False,
+        )
+        assert upd["invalidated_krs_nims"] == ["2025001-0001"]
+        assert upd["notifications_sent"] == []
+        assert upd["schedule"]["sequence"] == 1
+
+    with TestingSessionLocal() as db:
+        rina = db.scalars(select(KRS).where(KRS.nim == "2025001-0001")).first()
+        dimas = db.scalars(select(KRS).where(KRS.nim == "2025001-0002")).first()
+        sari = db.scalars(select(KRS).where(KRS.nim == "2025001-0003")).first()
+        assert rina is not None and rina.status == KRSStatus.REVISION
+        assert rina.approved_at is None
+        assert dimas is not None and dimas.status == KRSStatus.DRAFT
+        assert sari is not None and sari.status == KRSStatus.REVISION
+        assert sari.catatan_revisi == "Catatan awal dosen PA"
+
+        outbox_rows = db.scalars(select(Outbox)).all()
+        assert len(outbox_rows) == 1
+        assert outbox_rows[0].status == OutboxStatus.PENDING.value
+        assert outbox_rows[0].attempts == 0
+
+        # Verifikasi SQL SKIP LOCKED saat OutboxDispatcher.run() dipanggil
+        pg_sqls: list[str] = []
+        orig_wfu = Select.with_for_update
+
+        def _spy_skip_locked(self, **kwargs):
+            stmt = orig_wfu(self, **kwargs)
+            pg_sqls.append(str(stmt.compile(dialect=postgresql.dialect())).lower())
+            return stmt
+
+        monkeypatch.setattr(Select, "with_for_update", _spy_skip_locked)
+        summary = OutboxDispatcher(db, notif_mgr).run()
+        assert summary.picked == 1 and summary.sent == 1
+        assert any("for update skip locked" in sql for sql in pg_sqls)
+
+        db.refresh(outbox_rows[0])
+        assert outbox_rows[0].status == OutboxStatus.SENT.value
+        assert outbox_rows[0].attempts == 1
+        assert outbox_rows[0].processed_at is not None
+
+        # Simulasi retry/idempotency: jika event yang sama dikirim ulang, channel menolak duplikasi key
+        first_count = len(notif_mgr.get_logs(limit=500))
+        notif_mgr.notify(outbox_rows[0].to_event())
+        assert len(notif_mgr.get_logs(limit=500)) == first_count
+
+        # Simulasi observer rusak -> retry hingga 5x lalu berstatus FAILED
+        class FailingObserver:
+            def update(self, event: ScheduleEvent) -> list:
+                raise RuntimeError("Gateway mati")
+
+        fail_subject = ScheduleSubject()
+        fail_subject.attach(FailingObserver())
+        fail_event = ScheduleEvent(
+            event_type=EventType.SCHEDULE_CHANGED,
+            before={"hari_nama": "Senin"},
+            after={"hari_nama": "Selasa"},
+        )
+        db.add(Outbox.from_event(fail_event))
+        db.commit()
+
+        dispatcher = OutboxDispatcher(db, fail_subject, max_attempts=5)
+        for attempt in range(1, 5):
+            dispatcher.run()
+            row = db.scalars(select(Outbox).where(Outbox.event_id == fail_event.event_id)).first()
+            assert row is not None
+            assert row.attempts == attempt
+            assert row.status == OutboxStatus.PENDING.value
+        dispatcher.run()
+        row_final = db.scalars(select(Outbox).where(Outbox.event_id == fail_event.event_id)).first()
+        assert row_final is not None
+        assert row_final.attempts == 5
+        assert row_final.status == OutboxStatus.FAILED.value
+        assert row_final.last_error is not None and "FailingObserver" in row_final.last_error
+
+
+def _admin_headers() -> dict[str, str]:
+    token = create_access_token(
+        {"sub": "admin.akademik@sevima.ac.id", "role": "admin_akademik"}
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
     db_session_and_client,
 ) -> None:
     TestingSessionLocal, client = db_session_and_client
+    headers = _admin_headers()
 
     # Master endpoint rooms, lecturers, classes
     room_resp = client.post(
         "/api/schedules/rooms",
         json={"kode": "A201", "nama": "Ruang A201", "kapasitas": 50, "gedung": "A"},
+        headers=headers,
     )
     assert room_resp.status_code == 201
     assert room_resp.json()["kode"] == "A201"
@@ -763,12 +1088,14 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
     lec_resp = client.post(
         "/api/schedules/lecturers",
         json={"nidn": "0030039003", "nama": "Dr. Baru"},
+        headers=headers,
     )
     assert lec_resp.status_code == 201
 
     cls_resp = client.post(
         "/api/schedules/classes",
         json={"kode_mk": "IF201", "nama_kelas": "B", "kuota": 35, "semester": "20251"},
+        headers=headers,
     )
     assert cls_resp.status_code == 201
 
@@ -791,6 +1118,7 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
             "jam_mulai": "10:00",
             "jam_selesai": "08:00",
         },
+        headers=headers,
     )
     assert err_422_jam.status_code == 422
 
@@ -805,11 +1133,12 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
             "jam_mulai": "08:00",
             "jam_selesai": "10:00",
         },
+        headers=headers,
     )
     assert err_422_hari.status_code == 422
 
     # 2. ID tidak ditemukan -> 404 Not Found
-    assert client.get("/api/schedules/99999").status_code == 404
+    assert client.get("/api/schedules/99999", headers=headers).status_code == 404
 
     # 3. Kapasitas overflow -> 409 Conflict (polimorfisme ScheduleCapacityError)
     cap_err = client.post(
@@ -822,6 +1151,7 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
             "jam_mulai": "08:00",
             "jam_selesai": "10:00",
         },
+        headers=headers,
     )
     assert cap_err.status_code == 409
     assert "K01" in cap_err.json()["detail"]
@@ -837,6 +1167,7 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
             "jam_mulai": "08:00",
             "jam_selesai": "10:00",
         },
+        headers=headers,
     )
     assert s1.status_code == 201
     s1_id = s1.json()["schedule"]["id"]
@@ -853,6 +1184,7 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
             "jam_selesai": "10:30",
             "force": False,
         },
+        headers=headers,
     )
     assert s2_conflict.status_code == 409
     body_409 = s2_conflict.json()
@@ -871,17 +1203,20 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
             "jam_selesai": "10:30",
             "force": True,
         },
+        headers=headers,
     )
     assert s2_forced.status_code == 201
 
     # 6. GET /api/schedules/conflicts
-    conflicts_resp = client.get("/api/schedules/conflicts")
+    conflicts_resp = client.get("/api/schedules/conflicts", headers=headers)
     assert conflicts_resp.status_code == 200
     assert conflicts_resp.json()["total_conflicts"] >= 1
     assert conflicts_resp.json()["conflicts"][0]["type"] == "room_conflict"
 
-    # 7. Saran alternatif AI + terapkan via PUT -> bentrok hilang
-    suggest_resp = client.post(f"/api/schedules/{s1_id}/suggest-alternatives")
+    # 7. Saran alternatif AI + terapkan via PUT -> bentrok hilang & Outbox tercatat
+    suggest_resp = client.post(
+        f"/api/schedules/{s1_id}/suggest-alternatives", headers=headers
+    )
     assert suggest_resp.status_code == 200
     recs = suggest_resp.json()["recommendations"]
     assert len(recs) == 3
@@ -896,14 +1231,21 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
             "ruangan_kode": chosen["ruangan"],
             "force": False,
         },
+        headers=headers,
     )
     assert put_resp.status_code == 200
-    assert client.get("/api/schedules/conflicts").json()["total_conflicts"] == 0
+    assert put_resp.json()["outbox_event_id"] is not None
+    assert client.get("/api/schedules/conflicts", headers=headers).json()["total_conflicts"] == 0
 
-    # 8. Log notifikasi Observer tersedia
-    notif_resp = client.get("/api/schedules/notifications")
+    # 8. Log notifikasi Observer & status Outbox tersedia
+    notif_resp = client.get("/api/schedules/notifications", headers=headers)
     assert notif_resp.status_code == 200
     assert notif_resp.json()["total"] >= 3
+
+    outbox_resp = client.get("/api/schedules/outbox", headers=headers)
+    assert outbox_resp.status_code == 200
+    assert outbox_resp.json()["total"] == 1
+    assert outbox_resp.json()["items"][0]["status"] == "sent"
 
     # 9. Stateless detect endpoint
     detect_resp = client.post(
@@ -930,16 +1272,150 @@ def test_schedule_api_endpoints_404_409_422_and_conflict_resolver_ui(
                 },
             ]
         },
+        headers=headers,
     )
     assert detect_resp.status_code == 200
     assert detect_resp.json()["conflicts"][0]["type"] == "lecturer_conflict"
     assert detect_resp.json()["conflicts"][0]["affected"] == [10, 20]
 
     # 10. Seed demo dan UI HTML Dashboard
-    seed_resp = client.post("/api/schedules/seed-demo")
+    seed_resp = client.post("/api/schedules/seed-demo", headers=headers)
     assert seed_resp.status_code == 200
 
     ui_resp = client.get("/dashboard/conflicts")
     assert ui_resp.status_code == 200
     assert "Conflict Resolver" in ui_resp.text
     assert "/api/schedules" in ui_resp.text
+    assert "/api/auth/login" in ui_resp.text
+
+
+def test_schedule_rbac_admin_akademik_and_auth_login(db_session_and_client) -> None:
+    """Memastikan seluruh endpoint admin /api/schedules/* mewajibkan RBAC Admin Akademik (401/403)."""
+    _, client = db_session_and_client
+
+    assert client.get("/api/schedules").status_code == 401
+    assert client.get("/api/schedules/conflicts").status_code == 401
+    assert client.get("/api/schedules/outbox").status_code == 401
+
+    mhs_token = create_access_token({"sub": "rina@sevima.ac.id", "role": "mahasiswa"})
+    dosen_token = create_access_token({"sub": "budi@sevima.ac.id", "role": "dosen"})
+    assert (
+        client.get(
+            "/api/schedules",
+            headers={"Authorization": f"Bearer {mhs_token}"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            "/api/schedules/conflicts",
+            headers={"Authorization": f"Bearer {dosen_token}"},
+        ).status_code
+        == 403
+    )
+
+    bad_login = client.post(
+        "/api/auth/login",
+        json={"email": settings.ADMIN_DEMO_EMAIL, "password": "salah"},
+    )
+    assert bad_login.status_code == 401
+
+    ok_login = client.post(
+        "/api/auth/login",
+        json={
+            "email": settings.ADMIN_DEMO_EMAIL,
+            "password": settings.ADMIN_DEMO_PASSWORD,
+        },
+    )
+    assert ok_login.status_code == 200
+    jwt_token = ok_login.json()["access_token"]
+    assert (
+        client.get(
+            "/api/schedules",
+            headers={"Authorization": f"Bearer {jwt_token}"},
+        ).status_code
+        == 200
+    )
+
+
+def test_icalendar_export_crlf_uid_rrule_until_utc_and_sequence(
+    db_session_and_client,
+) -> None:
+    """Memastikan ekspor .ics mengikuti RFC 5545 (CRLF, UID stabil, RRULE UNTIL UTC, & SEQUENCE naik saat update)."""
+    TestingSessionLocal, client = db_session_and_client
+    headers = _admin_headers()
+
+    with TestingSessionLocal() as db:
+        k_ma = db.scalars(select(Kelas).where(Kelas.kode_mk == "MA101")).first()
+        k_if = db.scalars(select(Kelas).where(Kelas.kode_mk == "IF201")).first()
+        d1 = db.scalars(select(Dosen).where(Dosen.nidn == "0010018001")).first()
+        assert k_ma and k_if and d1
+
+        mgr = KRSManager(db, semester="20251", dosen_pa_id=10)
+        mgr.add_course("2025001-0001", "MA101", kelas_id=k_ma.id)
+        k_ma_id, k_if_id, d1_id = k_ma.id, k_if.id, d1.id
+
+    r1 = client.post(
+        "/api/schedules",
+        json={
+            "kelas_id": k_ma_id,
+            "ruangan_kode": "A101",
+            "dosen_id": d1_id,
+            "hari": 1,
+            "jam_mulai": "08:00",
+            "jam_selesai": "10:00",
+        },
+        headers=headers,
+    )
+    assert r1.status_code == 201
+    s1_id = r1.json()["schedule"]["id"]
+
+    r2 = client.post(
+        "/api/schedules",
+        json={
+            "kelas_id": k_if_id,
+            "ruangan_kode": "A102",
+            "dosen_id": d1_id,
+            "hari": 2,
+            "jam_mulai": "10:00",
+            "jam_selesai": "12:00",
+        },
+        headers=headers,
+    )
+    assert r2.status_code == 201
+    s2_id = r2.json()["schedule"]["id"]
+
+    # Export publik tanpa token admin
+    ics_resp = client.get("/api/schedules/export.ics?semester=20251")
+    assert ics_resp.status_code == 200
+    assert ics_resp.headers["content-type"].startswith("text/calendar")
+    raw_ics = ics_resp.text
+    assert "\r\n" in raw_ics
+    assert "\n" not in raw_ics.replace("\r\n", "")
+    assert "BEGIN:VCALENDAR" in raw_ics
+    assert "END:VCALENDAR" in raw_ics
+    assert f"UID:jadwal-{s1_id}@sevima-mini.ac.id" in raw_ics
+    assert f"UID:jadwal-{s2_id}@sevima-mini.ac.id" in raw_ics
+    assert "DTSTART;TZID=Asia/Jakarta:20250901T080000" in raw_ics
+    assert "RRULE:FREQ=WEEKLY;UNTIL=20251220T165959Z" in raw_ics
+    assert "SEQUENCE:0" in raw_ics
+
+    # Filter ?nim=2025001-0001 hanya menyertakan MA101 (s1_id)
+    ics_nim = client.get("/api/schedules/export.ics?semester=20251&nim=2025001-0001")
+    assert ics_nim.status_code == 200
+    assert f"UID:jadwal-{s1_id}@sevima-mini.ac.id" in ics_nim.text
+    assert f"UID:jadwal-{s2_id}@sevima-mini.ac.id" not in ics_nim.text
+
+    # Ubah jadwal s1 -> UID tetap sama namun SEQUENCE naik menjadi 1
+    upd = client.put(
+        f"/api/schedules/{s1_id}",
+        json={"hari": 3, "jam_mulai": "13:00", "jam_selesai": "15:00"},
+        headers=headers,
+    )
+    assert upd.status_code == 200
+
+    ics_after = client.get("/api/schedules/export.ics?semester=20251&nim=2025001-0001")
+    assert ics_after.status_code == 200
+    assert f"UID:jadwal-{s1_id}@sevima-mini.ac.id" in ics_after.text
+    assert "SEQUENCE:1" in ics_after.text
+    assert "DTSTART;TZID=Asia/Jakarta:20250903T130000" in ics_after.text

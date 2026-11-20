@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timezone
+import enum
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Time,
     UniqueConstraint,
@@ -234,6 +236,7 @@ class Jadwal(Base):
     hari: Mapped[int] = mapped_column(Integer, nullable=False)
     jam_mulai: Mapped[time] = mapped_column(Time, nullable=False)
     jam_selesai: Mapped[time] = mapped_column(Time, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -255,6 +258,85 @@ class Jadwal(Base):
     dosen: Mapped["Dosen"] = relationship(
         "app.models.schedule.Dosen", back_populates="jadwals"
     )
+
+
+class OutboxStatus(str, enum.Enum):
+    """Status baris Transactional Outbox untuk pengiriman event asinkron aman komit."""
+
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class Outbox(Base):
+    """Tabel Transactional Outbox yang ditulis atomik bersama perubahan jadwal & KRS."""
+
+    __tablename__ = "outbox"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'failed')", name="ck_outbox_status"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), default=OutboxStatus.PENDING.value, index=True, nullable=False
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    @classmethod
+    def from_event(cls, event: Any) -> "Outbox":
+        """Mengonversi ScheduleEvent menjadi baris Outbox siap simpan dalam transaksi DB."""
+        ev_type = (
+            event.event_type.value
+            if hasattr(event.event_type, "value")
+            else str(event.event_type)
+        )
+        ts = getattr(event, "timestamp", None) or datetime.now(timezone.utc)
+        return cls(
+            event_id=str(event.event_id),
+            payload={
+                "event_type": ev_type,
+                "before": getattr(event, "before", None),
+                "after": getattr(event, "after", None),
+                "meta": dict(getattr(event, "meta", {}) or {}),
+                "timestamp": ts.isoformat() if isinstance(ts, datetime) else str(ts),
+            },
+            status=OutboxStatus.PENDING.value,
+            attempts=0,
+        )
+
+    def to_event(self) -> Any:
+        """Merekonstruksi ScheduleEvent dari baris Outbox untuk diproses OutboxDispatcher."""
+        from app.services.schedule_observer import EventType, ScheduleEvent
+
+        data = dict(self.payload or {})
+        raw_ts = data.get("timestamp")
+        if isinstance(raw_ts, str):
+            ts = datetime.fromisoformat(raw_ts)
+        else:
+            ts = self.created_at or datetime.now(timezone.utc)
+        return ScheduleEvent(
+            event_type=EventType(data["event_type"]),
+            before=data.get("before"),
+            after=data.get("after"),
+            event_id=self.event_id,
+            timestamp=ts,
+            meta=dict(data.get("meta") or {}),
+        )
 
 
 JadwalKuliah = Jadwal

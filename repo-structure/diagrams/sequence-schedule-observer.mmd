@@ -1,19 +1,20 @@
-%% Sequence Diagram - Modul Jadwal & Ruangan (Observer Pattern & KRS Invalidation)
+%% Sequence Diagram - Modul Jadwal & Ruangan (Observer Pattern, Transactional Outbox, & KRS REVISION)
 sequenceDiagram
     autonumber
     actor Admin as Admin Akademik
     participant UI as ConflictResolverUI
+    participant API as "FastAPI Router (require_admin_akademik)"
     participant Service as SchedulingService
     participant Detector as "SortAndSweep / ConflictDetector"
-    participant DB as "Database (Ruangan, Dosen, Kelas, Jadwal, KRS)"
+    participant DB as "Database (Jadwal, KRS, Outbox)"
+    participant Dispatcher as "OutboxDispatcher (SKIP LOCKED)"
     participant Subject as "NotificationManager (ScheduleSubject)"
-    participant StudentObs as StudentObserver
-    participant LecturerObs as LecturerObserver
-    participant AdminObs as AdminObserver
-    participant Log as "NotificationLog (Email/SMS/Push)"
+    participant Observer as "Observer (Student / Lecturer / Admin)"
+    participant Channel as "LogChannel (Email / SMS / Push)"
 
-    Admin->>UI: Buka dashboard /dashboard/conflicts
-    UI->>Service: GET /api/schedules/conflicts
+    Admin->>UI: Login & buka /dashboard/conflicts
+    UI->>API: GET /api/schedules/conflicts (Bearer JWT)
+    API->>Service: get_all_conflicts(semester)
     activate Service
     Service->>Detector: detect_conflicts_sweep(jadwals)
     activate Detector
@@ -22,49 +23,55 @@ sequenceDiagram
     Service-->>UI: Tampilkan daftar jadwal bentrok
     deactivate Service
 
-    Admin->>UI: Klik "Saran Alternatif AI" pada jadwal bentrok
-    UI->>Service: POST /api/schedules/{id}/suggest-alternatives
+    Admin->>UI: Klik "Saran Alternatif AI"
+    UI->>API: POST /api/schedules/{id}/suggest-alternatives
+    API->>Service: suggest_alternatives(id)
     activate Service
-    Service-->>UI: 3 rekomendasi alternatif jadwal (JSON)
+    Service-->>UI: Maks. 3 saran tervalidasi 4 saringan (JSON)
     deactivate Service
 
-    Admin->>UI: Klik "Terapkan Jadwal" pada salah satu saran
-    UI->>Service: PUT /api/schedules/{id}
+    Admin->>UI: Klik "Terapkan Jadwal" pada saran
+    UI->>API: PUT /api/schedules/{id} (satu pintu)
+    API->>Service: update_schedule(...)
     activate Service
-    Service->>DB: Kunci baris Ruangan -> Dosen (FOR UPDATE)
-    Service->>Detector: Cek bentrok SQL & kapasitas (max(kuota, terdaftar) <= kapasitas)
+    Service->>DB: Kunci Ruangan -> Dosen (FOR UPDATE)
+    Service->>Detector: Cek bentrok SQL & kapasitas (max <= kapasitas)
     activate Detector
-    Detector-->>Service: Valid (kapasitas cukup & bebas bentrok)
+    Detector-->>Service: Valid (bebas bentrok & kapasitas cukup)
     deactivate Detector
 
-    Service->>DB: Update tabel jadwal (ACID)
     activate DB
-    Service->>DB: Pindahkan KRS terdampak ke REVISION + tulis KRSLog & Notifikasi
-    DB-->>Service: Commit transaksi berhasil
+    Service->>DB: Update jadwal & naikkan sequence
+    Service->>DB: KRS (SUBMITTED/APPROVED).transition(REVISION, Actor.SYSTEM) + KRSLog + Notifikasi
+    Service->>DB: Insert Outbox (event_id unik, status=pending)
+    DB-->>Service: COMMIT transaksi tunggal (ACID)
     deactivate DB
 
-    Service->>Subject: notify("SCHEDULE_CHANGED", schedule_data)
+    Service->>Dispatcher: run() setelah COMMIT
+    activate Dispatcher
+    Dispatcher->>DB: SELECT ... FROM outbox WHERE status='pending' FOR UPDATE SKIP LOCKED
+    Dispatcher->>Subject: notify(ScheduleEvent)
     activate Subject
-    Subject->>StudentObs: update(event)
-    activate StudentObs
-    StudentObs->>Log: Log simulasi EMAIL & PUSH ke mahasiswa terdampak
-    StudentObs-->>Subject: NotificationRecord[]
-    deactivate StudentObs
-
-    Subject->>LecturerObs: update(event)
-    activate LecturerObs
-    LecturerObs->>Log: Log simulasi EMAIL & SMS ke dosen pengampu
-    LecturerObs-->>Subject: NotificationRecord[]
-    deactivate LecturerObs
-
-    Subject->>AdminObs: update(event)
-    activate AdminObs
-    AdminObs->>Log: Log simulasi EMAIL, SMS, & PUSH ke admin akademik
-    AdminObs-->>Subject: NotificationRecord[]
-    deactivate AdminObs
-
-    Subject-->>Service: Ringkasan notifikasi terkirim
+    loop Setiap Observer dalam salinan daftar (dibungkus try/except)
+        Subject->>Observer: update(ScheduleEvent)
+        activate Observer
+        Observer->>Channel: send(recipient, msg, key=event_id:recipient:medium)
+        activate Channel
+        Channel-->>Observer: NotificationRecord (deduplikasi idempotency key)
+        deactivate Channel
+        Observer-->>Subject: NotificationRecord[]
+        deactivate Observer
+    end
+    Subject-->>Dispatcher: NotifyReport (records, failed_observers)
     deactivate Subject
-    Service-->>UI: Response jadwal baru, KRS terdampak -> REVISION, & log notifikasi
+
+    alt Semua observer berhasil (report.ok)
+        Dispatcher->>DB: Update Outbox status='sent', processed_at=now, COMMIT
+    else Ada observer gagal
+        Dispatcher->>DB: Increment attempts; jika >= 5 -> status='failed' else 'pending', COMMIT
+    end
+    deactivate Dispatcher
+
+    Service-->>UI: Response jadwal baru, KRS -> REVISION, & log notifikasi
     deactivate Service
-    UI-->>Admin: Tampilkan status sukses & pembaruan log Observer
+    UI-->>Admin: Tampilkan status sukses, tabel Outbox, & log 3 kanal
