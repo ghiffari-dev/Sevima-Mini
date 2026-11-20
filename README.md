@@ -21,14 +21,14 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 - **Global Exception Handler & Validasi Pydantic:** Penanganan error terpusat melalui `@app.exception_handler(KRSError)` (`400`, `403`, `409`, `422`) dan `@app.exception_handler(ScheduleError)` secara polimorfik lewat `exc.body()` (`404`, `409` bentrok/kapasitas) beserta validasi skema Pydantic (`datetime.time`, `jam_mulai < jam_selesai` → `422`).
 - **Challenge Opsional (+10%) — CSP Backtracking Recommender:** Penyusunan rekomendasi jadwal KRS bebas bentrok (`/api/krs/{nim}/recommend`) dengan prioritas MK wajib > pilihan yang hasil akhirnya wajib lolos `default_validators()`.
 - **Modul Jadwal & Ruangan (Minggu 7–8):**
-  - **Empat Model Domain & Migrasi (`b2c3d4sch008`):** `Ruangan` (PK `kode` & `kapasitas`), `Dosen` (`nidn` unik), `Kelas` (kelas paralel `kuota` & `semester`), dan `Jadwal` (multi-pertemuan per minggu dengan indeks gabungan `(hari, ruangan_kode)` dan `(hari, dosen_id)`), pemindahan jam keluar dari `MataKuliah`, serta penambahan `KRSDetail.kelas_id`.
+  - **Empat Model Domain & Migrasi (`b2c3d4sch008` & `c3d4e5sch009`):** `Ruangan` (PK `kode` & `kapasitas`), `Dosen` (`nidn` unik), `Kelas` (kelas paralel `kuota` & `semester`), `Jadwal` (multi-pertemuan per minggu dengan indeks gabungan `(hari, ruangan_kode)` dan `(hari, dosen_id)`, serta kolom `sequence` untuk versioning `.ics`), dan `Outbox` (tabel *Transactional Outbox*), pemindahan jam keluar dari `MataKuliah`, serta penambahan `KRSDetail.kelas_id`.
   - **Detektor Bentrok 3D (*Naive* + *Grouping + Sort & Sweep*):** Memodelkan penjadwalan sebagai *Constraint Satisfaction Problem* (*Hard* vs *Soft Constraints*) dengan interval setengah terbuka `[jam_mulai, jam_selesai)` untuk mendeteksi `room_conflict` dan `lecturer_conflict`, plus pengecekan kapasitas `max(kuota, terdaftar) <= kapasitas` (`409 Conflict`).
   - **Scheduling Service & Penguncian Pesimis:** `create_schedule` dan `update_schedule` berbagi metode `_simpan()` dengan urutan ketat kunci baris `Ruangan -> Dosen` (`with_for_update()`), query bentrok langsung di SQL memakai indeks gabungan, cek kapasitas, dan tambah objek ke session paling akhir sebelum `commit()`.
-  - **Observer Pattern (`ScheduleSubject` & `NotificationManager`):** Penyiaran otomatis event perubahan jadwal (`SCHEDULE_CREATED`, `SCHEDULE_CHANGED`, `SCHEDULE_DELETED`, `CONFLICT_DETECTED`) ke `StudentObserver`, `LecturerObserver`, dan `AdminObserver` dengan simulasi medium **Email / SMS / Push** via log.
-  - **Conflict Resolver UI & Hybrid AI Rescheduler:** Dashboard web admin di `/dashboard/conflicts` untuk memantau bentrok, meminta 3 rekomendasi jadwal alternatif (`[{hari, jam, ruangan, reason}]`) via LLM API (jika key tersedia di `.env`) atau *rule-based fallback* dengan *guardrail* bebas bentrok, dan menerapkannya dalam satu klik.
-  - **Integrasi KRS (`REVISION`):** Perubahan/penghapusan jadwal otomatis memindahkan KRS terdampak (`SUBMITTED`/`APPROVED`) kembali ke status `REVISION` (`KRS.invalidate_by_schedule_change()`) lengkap dengan `KRSLog` dan `Notifikasi` dalam satu transaksi ACID.
-- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`b2c3d4sch008 (head)`), dan skrip inisialisasi database.
-- **Automated Testing (104 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine, integrasi `KRSManager` + DB, *Property-Based Testing* (**2×1000 contoh acak** batas SKS $\le$ 24 & bebas bentrok, **28 kombinasi transisi ilegal**, **200 contoh CSP**, **2×300 contoh** properti bebas bentrok & *differential testing* `Sort & Sweep` vs `Naive`), pengujian 7 kasus bug klasik AI, penguncian pesimis, *Observer Pattern*, *Hybrid AI Rescheduler*, invalidasi KRS, serta API integration test via `TestClient` untuk PMB, KRS, & Schedule.
+  - **Observer Pattern (`typing.Protocol`), Strategy `LogChannel`, & Transactional Outbox:** `ScheduleSubject` dan `NotificationManager` dirangkai sekali saat startup untuk menyiarkan `ScheduleEvent` (frozen dataclass dengan `event_id`, `before`, `after`, dan `EventType`) ke `StudentObserver`, `LecturerObserver`, dan `AdminObserver` dengan isolasi `try/except` per observer serta `LogChannel` (**Email / SMS / Push**) ber-*idempotency key*. Perubahan/penghapusan jadwal menulis baris `outbox` dalam satu transaksi DB, lalu `OutboxDispatcher` mengirimkannya **setelah `commit()`** dengan `FOR UPDATE SKIP LOCKED` dan retry maks. 5× sebelum `failed`.
+  - **AI Rescheduler (`LLMClient` + 4 Saringan), Conflict Resolver UI, & RBAC Admin:** Abstraksi `LLMClient.complete()` (`GeminiLLMClient` JSON mode, `OpenRouterLLMClient`, `OpenAILLMClient`, `FakeLLMClient`) dengan perhitungan slot kosong deterministik oleh backend serta 4 saringan ketat (parsing `[`..`]`, skema Pydantic `AISuggestionItem`, cek eksistensi & kapasitas ruangan di DB, dan uji `detect_conflicts_sweep()` calon ID `-1`). Seluruh endpoint manajemen `/api/schedules/*` dilindungi RBAC JWT `require_admin_akademik` (`POST /api/auth/login`) dan terhubung ke dashboard `/dashboard/conflicts`.
+  - **Integrasi KRS (`Actor.SYSTEM`) & Ekspor iCalendar (`.ics`):** Perubahan/penghapusan jadwal otomatis memindahkan KRS `SUBMITTED`/`APPROVED` terdampak ke `REVISION` lewat satu pintu `KRS.transition(..., actor=Actor.SYSTEM)` (membiarkan `DRAFT`/`REVISION` utuh) lengkap dengan `KRSLog` dan `Notifikasi` dalam satu transaksi ACID; tersedia juga ekspor `/api/schedules/export.ics` sesuai RFC 5545 (`CRLF`, `UID` stabil, `DTSTART`/`DTEND` `Asia/Jakarta`, `RRULE` `UNTIL` UTC, dan kenaikan `SEQUENCE`).
+- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`c3d4e5sch009 (head)`), dan skrip inisialisasi database.
+- **Automated Testing (126 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine, integrasi `KRSManager` + DB, *Property-Based Testing* (**2×1000 contoh acak** batas SKS $\le$ 24 & bebas bentrok, **42 kombinasi transisi ilegal** dari 48 kombinasi, **200 contoh CSP**, **2×300 contoh** properti bebas bentrok & *differential testing* `Sort & Sweep` vs `Naive`), pengujian 7 kasus bug klasik AI, penguncian pesimis, **4 tes utama Minggu 8** (`SpyObserver` attach 2×, `BrokenObserver` tidak hentikan observer lain, integrasi KRS Rina `APPROVED -> REVISION` + 1 baris `Outbox` + `SKIP LOCKED` + retry/idempotency, dan 4 saringan via `FakeLLMClient`), RBAC Admin Akademik (`401`/`403`/`200`), ekspor `.ics`, serta API integration test via `TestClient` untuk PMB, KRS, & Schedule.
 
 ## Ringkasan Endpoint API, State Machine KRS, & Alur Penjadwalan
 
@@ -36,6 +36,7 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 
 | Modul | Method & Endpoint | Body Utama | Status HTTP | Keterangan |
 | :--- | :--- | :--- | :--- | :--- |
+| **Auth** | `POST /api/auth/login` | `email`, `password` | `200`, `401`, `422` | Autentikasi & penerbitan JWT Bearer token |
 | **PMB** | `POST /api/pmb/register` | Data calon mahasiswa | `201`, `409`, `422` | Registrasi pendaftar baru |
 | **PMB** | `GET /api/pmb/status/{id}` | — | `200`, `404` | Cek status pendaftaran |
 | **PMB** | `PUT /api/pmb/approve/{id}` | — | `200`, `404`, `409` | Approval & generate NIM otomatis |
@@ -46,19 +47,22 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 | **KRS** | `POST /api/krs/{nim}/approve` | `dosen_pa_id`, `version` | `200`, `403`, `409` | Setujui KRS (satu unit kerja ACID) |
 | **KRS** | `POST /api/krs/{nim}/revise` | `dosen_pa_id`, `catatan`, `version` | `200`, `403`, `409`, `422` | Minta revisi KRS dengan catatan wajib |
 | **KRS** | `POST /api/krs/{nim}/recommend` | `wajib_codes`, `pilihan_codes`, `max_sks` | `200` | Rekomendasi jadwal CSP tervalidasi |
-| **Schedule** | `GET / POST /api/schedules/rooms` | Data ruangan (`kode`, `kapasitas`) | `200`, `201`, `409` | Daftar & tambah master ruangan |
-| **Schedule** | `GET / POST /api/schedules/lecturers` | Data dosen (`nidn`, `nama`) | `200`, `201`, `409` | Daftar & tambah master dosen |
-| **Schedule** | `GET / POST /api/schedules/classes` | Data kelas (`kode_mk`, `nama_kelas`, `kuota`) | `200`, `201`, `404`, `409` | Daftar & tambah kelas paralel |
-| **Schedule** | `GET /api/schedules/courses` | — | `200` | Katalog mata kuliah |
-| **Schedule** | `GET / POST /api/schedules` | Data jadwal (`kelas_id`, `ruangan_kode`, `dosen_id`, `hari`, `jam_mulai`, `jam_selesai`) | `200`, `201`, `404`, `409`, `422` | Daftar & buat jadwal (lock, cek bentrok SQL, kapasitas `409`) |
-| **Schedule** | `GET /api/schedules/{id}` | — | `200`, `404` | Detail satu jadwal kuliah |
-| **Schedule** | `PUT / DELETE /api/schedules/{id}` | Perubahan jadwal (`hari`, `jam_mulai`, `jam_selesai`, `ruangan_kode`) | `200`, `404`, `409`, `422` | Ubah/hapus jadwal, invalidasi KRS -> `REVISION`, & notify Observer |
-| **Schedule** | `GET /api/schedules/conflicts` | — | `200` | Deteksi bentrok aktif via *Grouping + Sort & Sweep* |
-| **Schedule** | `POST /api/schedules/detect` | `schedules[]` | `200`, `422` | Deteksi bentrok ruangan & dosen stateless |
-| **Schedule** | `POST /api/schedules/{id}/suggest-alternatives` | — | `200`, `404` | 3 saran jadwal alternatif (Hybrid AI + guardrail) |
-| **Schedule** | `GET /api/schedules/notifications` | — | `200` | Log simulasi notifikasi Observer (Email/SMS/Push) |
-| **Schedule** | `POST /api/schedules/seed-demo` | — | `200` | Muat skenario data demo bentrok untuk Admin UI |
-| **UI** | `GET /dashboard/conflicts` | — | `200` | Halaman **Conflict Resolver UI** untuk Admin Akademik |
+| **Schedule** | `GET /api/schedules/export.ics` | Query `semester`, `nim` (opsional) | `200` | Ekspor iCalendar `.ics` publik/mahasiswa (RFC 5545) |
+| **Schedule** | `GET / POST /api/schedules/rooms` | Data ruangan (`kode`, `kapasitas`) | `200`, `201`, `401`, `403`, `409` | Daftar & tambah master ruangan (RBAC Admin) |
+| **Schedule** | `GET / POST /api/schedules/lecturers` | Data dosen (`nidn`, `nama`) | `200`, `201`, `401`, `403`, `409` | Daftar & tambah master dosen (RBAC Admin) |
+| **Schedule** | `GET / POST /api/schedules/classes` | Data kelas (`kode_mk`, `nama_kelas`, `kuota`) | `200`, `201`, `401`, `403`, `404`, `409` | Daftar & tambah kelas paralel (RBAC Admin) |
+| **Schedule** | `GET /api/schedules/courses` | — | `200`, `401`, `403` | Katalog mata kuliah (RBAC Admin) |
+| **Schedule** | `GET / POST /api/schedules` | Data jadwal (`kelas_id`, `ruangan_kode`, `dosen_id`, `hari`, `jam_mulai`, `jam_selesai`) | `200`, `201`, `401`, `403`, `404`, `409`, `422` | Daftar & buat jadwal (lock, cek bentrok SQL, kapasitas `409`, RBAC Admin) |
+| **Schedule** | `GET /api/schedules/{id}` | — | `200`, `401`, `403`, `404` | Detail satu jadwal kuliah (RBAC Admin) |
+| **Schedule** | `PUT / DELETE /api/schedules/{id}` | Perubahan jadwal (`hari`, `jam_mulai`, `jam_selesai`, `ruangan_kode`) | `200`, `401`, `403`, `404`, `409`, `422` | Ubah/hapus jadwal, invalidasi KRS -> `REVISION`, tulis Outbox, & dispatch setelah komit |
+| **Schedule** | `GET /api/schedules/conflicts` | — | `200`, `401`, `403` | Deteksi bentrok aktif via *Grouping + Sort & Sweep* (RBAC Admin) |
+| **Schedule** | `POST /api/schedules/detect` | `schedules[]` | `200`, `401`, `403`, `422` | Deteksi bentrok ruangan & dosen stateless (RBAC Admin) |
+| **Schedule** | `POST /api/schedules/{id}/suggest-alternatives` | — | `200`, `401`, `403`, `404` | 3 saran jadwal alternatif (`LLMClient` + 4 saringan, RBAC Admin) |
+| **Schedule** | `GET /api/schedules/notifications` | — | `200`, `401`, `403` | Log simulasi notifikasi Observer (Email/SMS/Push, RBAC Admin) |
+| **Schedule** | `GET /api/schedules/outbox` | — | `200`, `401`, `403` | Daftar baris Transactional Outbox (`pending`/`sent`/`failed`, RBAC Admin) |
+| **Schedule** | `POST /api/schedules/outbox/dispatch` | — | `200`, `401`, `403` | Proses ulang baris Outbox `pending` (RBAC Admin) |
+| **Schedule** | `POST /api/schedules/seed-demo` | — | `200`, `401`, `403` | Muat skenario data demo bentrok & akun Admin demo (RBAC Admin) |
+| **UI** | `GET /dashboard/conflicts` | — | `200` | Halaman **Conflict Resolver UI** (dengan bilah login Admin JWT) |
 
 ### Alur Transisi Sah State Machine KRS
 
@@ -66,15 +70,17 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 2. `SUBMITTED -> APPROVED` — dilakukan oleh **Dosen PA** mahasiswa tersebut (`krs.dosen_pa_id`).
 3. `SUBMITTED -> REVISION` — dilakukan oleh **Dosen PA** mahasiswa tersebut dengan `catatan_revisi` wajib diisi.
 4. `REVISION -> SUBMITTED` — dilakukan oleh **Mahasiswa** setelah memperbaiki isi KRS.
+5. `SUBMITTED -> REVISION` — dilakukan oleh **Sistem** (`Actor.SYSTEM`) saat jadwal kelas yang diambil berubah atau dihapus.
+6. `APPROVED -> REVISION` — dilakukan oleh **Sistem** (`Actor.SYSTEM`) saat jadwal kelas yang diambil berubah atau dihapus (mengosongkan `approved_at`).
 
-> **Catatan keamanan model:** Penulisan langsung `krs.status = ...` di luar `KRS.transition()` maupun `KRS.invalidate_by_schedule_change()` diblokir otomatis oleh `@validates("status")` (`TransitionError` / HTTP `409`). Saat jadwal mata kuliah berubah atau dihapus melalui `SchedulingService`, sistem memanggil `KRS.invalidate_by_schedule_change()` dalam transaksi ACID untuk mengembalikan KRS `SUBMITTED`/`APPROVED` terdampak ke `REVISION` beserta pencatatan `KRSLog` dan `Notifikasi`.
+> **Catatan keamanan model:** Penulisan langsung `krs.status = ...` di luar `KRS.transition()` diblokir otomatis oleh `@validates("status")` (`TransitionError` / HTTP `409`). Method `KRS.invalidate_by_schedule_change()` mendelegasikan langsung ke `KRS.transition(KRSStatus.REVISION, actor=Actor.SYSTEM, catatan=reason)` dalam transaksi ACID milik `SchedulingService` (KRS `DRAFT` dan `REVISION` tidak disentuh), disertai pencatatan `KRSLog` dan `Notifikasi`.
 
 ### Alur Modul Jadwal & Ruangan (Minggu 7–8)
 
 1. **Deteksi Bentrok 3D (*Grouping + Sort & Sweep*):** `GET /api/schedules/conflicts` mengelompokkan jadwal per `(hari, ruangan_kode)` dan `(hari, dosen_id)` pada interval setengah terbuka `[jam_mulai, jam_selesai)` untuk mendeteksi `room_conflict` dan `lecturer_conflict` secara deterministik (diverifikasi identik terhadap versi *Naive* `itertools.combinations`).
-2. **Saran Alternatif AI (`Hybrid`):** Admin memilih jadwal bentrok pada `/dashboard/conflicts` dan memanggil `POST /api/schedules/{id}/suggest-alternatives` untuk memperoleh 3 opsi `[{hari, jam, ruangan, reason}]` yang memenuhi kapasitas ruangan, bebas bentrok dosen/ruangan, dan meminimalkan gangguan jadwal mahasiswa.
-3. **Penerapan & Invalidasi KRS (`ACID`):** `PUT /api/schedules/{id}` mengunci baris `Ruangan -> Dosen`, memvalidasi bentrok di SQL dan kapasitas (`409`), memperbarui tabel `jadwal`, sekaligus memindahkan KRS terdampak ke `REVISION`.
-4. **Notifikasi Observer Pattern:** `NotificationManager` (`ScheduleSubject`) menyiarkan event ke `StudentObserver`, `LecturerObserver`, dan `AdminObserver` dengan simulasi log `EMAIL`, `SMS`, dan `PUSH`.
+2. **Saran Alternatif AI (`LLMClient` + 4 Saringan):** Admin login lalu memilih jadwal bentrok pada `/dashboard/conflicts` dan memanggil `POST /api/schedules/{id}/suggest-alternatives` untuk memperoleh maks. 3 opsi `[{hari, jam, ruangan, reason}]` yang lolos 4 saringan (parsing `[`..`]`, skema Pydantic, kapasitas ruang DB, dan `detect_conflicts_sweep` calon ID `-1`).
+3. **Satu Transaksi ACID (`PUT /api/schedules/{id}`):** Mengunci baris `Ruangan -> Dosen`, memvalidasi bentrok di SQL dan kapasitas (`409`), memperbarui tabel `jadwal` dan menaikkan `sequence`, memindahkan KRS `SUBMITTED`/`APPROVED` terdampak ke `REVISION` via `Actor.SYSTEM`, serta menulis baris `Outbox` (`pending`) sebelum **`COMMIT`**.
+4. **Dispatcher & Ekspor `.ics`:** Setelah `COMMIT`, `OutboxDispatcher.run()` mengunci baris `pending` (`SKIP LOCKED`) dan memanggil `ScheduleSubject.notify()` (`try/except` per observer, kunci idempotensi di `LogChannel`, retry maks. 5× $\rightarrow$ `failed`); mahasiswa dapat mengunduh jadwal terbaru melalui `GET /api/schedules/export.ics`.
 
 ## Struktur Proyek
 
@@ -103,32 +109,35 @@ backend/
 │       ├── 8b2104krs005_tabel_krs.py
 │       ├── 9c3205krs006_krs_state_columns.py
 │       ├── a1b2c3sch007_tabel_jadwal_ruangan.py
-│       └── b2c3d4sch008_refactor_domain_jadwal.py
+│       ├── b2c3d4sch008_refactor_domain_jadwal.py
+│       └── c3d4e5sch009_outbox_dan_sequence_jadwal.py
 ├── alembic.ini                  # Konfigurasi Alembic
 ├── app/
-│   ├── core/                    # Konfigurasi (DB, Security JWT, & env AI opsional)
+│   ├── core/                    # Konfigurasi (DB, Security JWT & RBAC Admin, & env AI opsional)
 │   ├── models/                  # Model SQLAlchemy 2.0 ORM
-│   │   ├── schedule.py          # Model Ruangan, Dosen, Kelas, Jadwal, & ScheduleError (Minggu 7–8)
+│   │   ├── schedule.py          # Model Ruangan, Dosen, Kelas, Jadwal (sequence), Outbox, & ScheduleError (Minggu 7–8)
 │   │   └── ...                  # Model PMB, KRS, User, Course, Enrollment, Grade, Payment
 │   ├── repositories/            # Repository Pattern (IPMBRepository & SQLite)
 │   ├── routers/                 # Endpoint FastAPI
+│   │   ├── auth.py              # Endpoint Login JWT (/api/auth/login)
 │   │   ├── pmb.py               # Endpoint PMB (/api/pmb)
 │   │   ├── krs.py               # Endpoint KRS & CSP Recommender (/api/krs)
-│   │   └── schedule.py          # Endpoint Jadwal, Ruangan, Dosen, Kelas, Conflict, AI & Logs (/api/schedules)
-│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py)
+│   │   └── schedule.py          # Endpoint Jadwal, Outbox, Conflict, AI, .ics, & Logs (/api/schedules)
+│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py & Outbox)
 │   ├── services/                # Business Logic Layer
+│   │   ├── calendar_exporter.py # Ekspor iCalendar RFC 5545 (.ics) dengan CRLF, UID, RRULE UTC, & SEQUENCE
 │   │   ├── conflict_detector.py # Detektor bentrok Naive & Grouping + Sort & Sweep + cek_kapasitas
-│   │   ├── schedule_observer.py # Observer Pattern (ScheduleSubject, NotificationManager, Observers)
-│   │   ├── schedule_recommender.py # Hybrid AI Rescheduler + Guardrail + Rule-Based Fallback
-│   │   ├── scheduling_service.py   # Layanan Penjadwalan (locking pesimis, SQL conflict, invalidasi KRS ACID)
+│   │   ├── schedule_observer.py # Observer Protocol, LogChannel (idempotency key), & OutboxDispatcher
+│   │   ├── schedule_recommender.py # LLMClient + 4 Saringan Pydantic/Kapasitas/Bentrok + Rule-Based Fallback
+│   │   ├── scheduling_service.py   # Layanan Penjadwalan (locking pesimis, SQL conflict, Outbox & KRS ACID)
 │   │   └── ...                  # pmb_service, krs_manager, krs_validator, krs_recommender
 │   ├── static/                  # Conflict Resolver Admin UI
 │   │   └── conflict_resolver.html
 │   └── main.py                  # Entry Point FastAPI, Exception Handler, & Dashboard UI
 ├── tests/
 │   ├── test_krs_api.py          # API Integration Testing KRS (TestClient)
-│   ├── test_krs_property.py     # Property-Based Testing (Hypothesis) & 28 Transisi Ilegal
-│   └── test_schedule.py         # Unit, Property, Observer, AI Rescheduler, KRS Invalidation, & API/UI Tests (Minggu 7–8)
+│   ├── test_krs_property.py     # Property-Based Testing (Hypothesis) & 42 Transisi Ilegal (48 Kombinasi)
+│   └── test_schedule.py         # Unit, Property, 4 Tes Minggu 8, RBAC, Ekspor .ics, & API/UI Tests
 ├── init_db.py                   # Skrip Inisialisasi & Seeding Database
 ├── test_models_and_schemas.py   # Unit & Integration Test Model, Validator, & State Machine KRS
 ├── test_pmb.py                  # API Integration Testing PMB (Pytest)
@@ -154,7 +163,7 @@ backend/
    pip install -r backend/requirements.txt
    ```
 3. **Konfigurasi AI Opsional (`.env`):**
-   - Tambahkan `GEMINI_API_KEY` atau `OPENAI_API_KEY` (serta `AI_MODEL` jika ingin menentukan model) di `.env` untuk memakai LLM sungguhan pada fitur rekomendasi rescheduling.
+   - Tambahkan `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, atau `OPENAI_API_KEY` (serta `AI_MODEL` jika ingin menentukan model) di `.env` untuk memakai LLM sungguhan pada fitur rekomendasi rescheduling.
    - Jika tidak diisi, sistem otomatis memakai *rule-based fallback* yang tetap bebas bentrok dan aman kapasitas.
 4. **Inisialisasi Database & Migrasi Alembic:**
    ```bash
@@ -170,7 +179,8 @@ backend/
    cd backend && uvicorn app.main:app --reload
    ```
    * Akses dokumentasi API interaktif (Swagger UI) di: http://127.0.0.1:8000/docs
-   * Akses **Conflict Resolver Admin UI** di: http://127.0.0.1:8000/dashboard/conflicts (klik **Muat Data Demo Bentrok** untuk mencoba langsung).
+   * Akses **Conflict Resolver Admin UI** di: http://127.0.0.1:8000/dashboard/conflicts (klik **Login Admin** dengan akun demo `admin.akademik@sevima.ac.id` / `admin123`, lalu klik **Muat Data Demo Bentrok**).
+   * Unduh jadwal kuliah dalam format **iCalendar (.ics)** di: http://127.0.0.1:8000/api/schedules/export.ics (opsional `?semester=20251&nim=2025001-0001`).
 
 ## Lisensi
 
