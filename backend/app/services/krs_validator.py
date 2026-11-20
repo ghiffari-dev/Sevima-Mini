@@ -3,14 +3,17 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import time
-from sqlalchemy import select
+from decimal import Decimal
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.course import Course, Kelas, Schedule
 from app.models.enrollment import Enrollment
+from app.models.finance import Billing, BillingStatus
 from app.models.grade import SkalaNilai
 from app.models.krs import KRS, KRSDetail, KRSStatus, MataKuliah, prerequisite
 from app.models.pendaftaran import PendaftaranKRS
+from app.services.finance_calculator import ZERO, format_rupiah, quantize_money, to_decimal
 
 # Pemetaan bobot numerik standar untuk mencegah jebakan perbandingan string ASCII ('D' > 'C')
 GRADE_WEIGHT_MAP: dict[str, float] = {
@@ -331,6 +334,37 @@ class ConflictValidator(Validator):
                                     ),
                                 )
         return ValidationResult(True)
+
+
+class TunggakanValidator(Validator):
+    """Validator opsional pemblokir KRS apabila mahasiswa memiliki tagihan SPP belum lunas."""
+
+    def check(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult:
+        if not isinstance(ctx, KRSContext) or ctx.db is None:
+            return ValidationResult(True)
+        conn = ctx.db.connection()
+        if not inspect(conn).has_table(Billing.__tablename__):
+            return ValidationResult(True)
+
+        stmt = (
+            select(Billing)
+            .where(Billing.nim == ctx.nim, Billing.status != BillingStatus.PAID)
+            .order_by(Billing.due_date.asc(), Billing.id.asc())
+        )
+        unpaid = list(ctx.db.scalars(stmt).all())
+        if not unpaid:
+            return ValidationResult(True)
+
+        total_sisa = sum(
+            (quantize_money(to_decimal(b.remaining)) for b in unpaid),
+            start=ZERO,
+        )
+        statuses = ", ".join(sorted({b.status.value for b in unpaid}))
+        return ValidationResult(
+            False,
+            f"Pengisian KRS diblokir karena masih ada {len(unpaid)} tagihan SPP "
+            f"belum lunas ({statuses}) sebesar {format_rupiah(total_sisa)}",
+        )
 
 
 def build_chain(vs: list[Validator]) -> Validator:

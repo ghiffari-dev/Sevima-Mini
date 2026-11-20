@@ -57,6 +57,13 @@ class KRSForbiddenError(KRSError):
 ForbiddenError = KRSForbiddenError
 
 
+class KRSBillingBlockedError(KRSError):
+    """Exception ketika mahasiswa masih memiliki tagihan SPP yang belum lunas (403 Forbidden)."""
+
+    def __init__(self, message: str, status_code: int = 403) -> None:
+        super().__init__(message, status_code=status_code)
+
+
 prerequisite = Table(
     "prerequisite",
     Base.metadata,

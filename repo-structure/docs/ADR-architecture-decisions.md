@@ -177,6 +177,38 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 - **Append-Only & SQL View `riwayat_nilai`:**
   - Tabel `grade_history` bersifat *append-only* (tidak pernah di-`UPDATE` atau `DELETE`; di produksi hak `UPDATE`/`DELETE` untuk user aplikasi dicabut). SQL View `riwayat_nilai` menggabungkan `grade_history`, `krs_detail`, `krs`, `matakuliah`, dan `dosen` sehingga endpoint `GET /api/mahasiswa/{nim}/riwayat-nilai` dapat mengambil histori lengkap mahasiswa dengan satu `SELECT`.
 
+### 3.24 Payment Schema Modul Keuangan (`payment_method`, `billing`, `payment`) & Presisi `Decimal` (Minggu 11)
+- **Pemisahan Skema Keuangan SPP (`e5f6g7fin011`) dari Model Legacy `payments`:**
+  - Di repositori sudah terdapat model legacy `Payment` (`payments`, `pembayaran_pmbs`, `pembayaran_krss`) berbasis `Float` untuk kompatibilitas tes awal Minggu 1–4. Modul Keuangan Minggu 11 memperkenalkan tiga tabel baru yang ternormalisasi dan bermigrasi lewat Alembic `e5f6g7fin011`: `payment_method`, `billing` (`UniqueConstraint("nim", "semester")`), dan `payment` (`transaction_id` unik), ditambah kolom opsional `program_studi.biaya_spp`.
+  - Seluruh kolom nominal uang (`biaya_spp`, `amount`, `late_fee`, `amount_paid`) memakai tipe **`NUMERIC(14, 2)` / `Decimal`** (`ROUND_HALF_UP`) agar bebas galat pembulatan biner `float`.
+- **Tarif SPP Berbasis Data + Fallback Terkonfigurasi:**
+  - `BillingService.generate_billing()` menargetkan mahasiswa aktif (`calon_mahasiswa` dengan `status = 'approved'` dan `nim IS NOT NULL`) dengan jatuh tempo `semester_start + SPP_DUE_DAYS` (default `14` hari). Tarif dibaca dari `program_studi.biaya_spp` bila terisi, atau dipetakan lewat konfigurasi (`Teknik = 5.000.000`, `Ekonomi = 4.000.000`, default `4.500.000`).
+
+### 3.25 State Machine Tagihan (`BillingStatus`), Cicilan Kumulatif, & Denda Terkonfigurasi
+- **Perbaikan Bug Cicilan Kumulatif & Matriks Transisi:**
+  - Evaluasi status tagihan di `determine_billing_status()` selalu membandingkan **akumulasi** `amount_paid + amount` terhadap `total_due` (`amount + late_fee`) dan `due_date`: `>= total_due -> paid`, lewat `due_date -> overdue`, `> 0 -> partial`, selain itu `unpaid`. Tagihan `paid` menolak pembayaran lanjutan (`409 BillingAlreadyPaidError`), dan nominal `<= 0` ditolak (`422 InvalidPaymentAmountError`).
+  - Matriks transisi `BILLING_TRANSITIONS` dan `Billing.set_status()` memastikan tagihan `paid` bersifat terminal dan `overdue` tidak mundur menjadi `partial` saat dicicil sebagian.
+- **Konfigurasi Default Denda Keterlambatan (`LateFeeConfig`):**
+  - Karena spesifikasi tidak merinci rumus denda, sistem menggunakan `LateFeeConfig` berbasis `Decimal` yang dibaca dari `Settings`: `2%` per blok keterlambatan 30 hari (`LATE_FEE_RATE_PER_MONTH=0.02`), batas maksimal `10%` (`LATE_FEE_MAX_RATE=0.10`), dan `grace_days=0` (`LATE_FEE_GRACE_DAYS=0`).
+
+### 3.26 Webhook HMAC-SHA256, Idempotensi `transaction_id`, & Simulasi Receipt Email
+- **Keamanan & Atomisitas Webhook (`POST /api/finance/webhook`):**
+  - Payload mentah (`await request.body()`) diverifikasi dengan `HMAC-SHA256` + `hmac.compare_digest()` via header `X-Webhook-Signature` (`401 WebhookSignatureError` jika tidak sah).
+  - `Billing` dikunci dengan `.with_for_update()`, kolom `payment.transaction_id` bersifat `UNIQUE` agar pengiriman ulang webhook (*retry*) mengembalikan `200 OK` secara idempoten (`idempotent_replay=True`) tanpa menggandakan saldo bayar, dan webhook berstatus non-sukses (`failed`/`expired`/`pending`) hanya mencatat log transaksi tanpa mengubah saldo tagihan.
+  - Pencatatan `PaymentTransaction`, pembaruan `Billing`, dan penulisan baris `Notifikasi` dilakukan dalam satu transaksi ACID; setelah `commit()`, kwitansi email disimulasikan lewat `LogChannel("EMAIL")` (`schedule_observer.py`) dengan kunci idempotensi `receipt:<transaction_id>`.
+
+### 3.27 Pemblokiran KRS Saat Ada Tunggakan (`BillingGuardPort` & `KRSBillingBlockedError`)
+- **Integrasi Tanpa Regresi via Dependency Inversion:**
+  - `KRSManager` menerima `BillingGuardPort` (default `SQLAlchemyBillingGuard`) dan menjalankan `_cek_tunggakan_spp(nim)` pada `add_course()`, `remove_course()`, dan `submit_krs()`, serta tersedia pula `TunggakanValidator` untuk komposisi *Chain of Responsibility*.
+  - Sesuai keputusan bisnis, mahasiswa dengan **setiap** tagihan belum lunas (`unpaid`, `partial`, `overdue`) ditolak dengan `KRSBillingBlockedError` (HTTP `403 Forbidden`), dan blokir otomatis terbuka segera setelah status seluruh tagihan menjadi `paid`. Pengecekan keberadaan tabel memakai `inspect(db.connection()).has_table(...)` (koneksi sesi aktif) agar tidak memicu `ROLLBACK` pada pool koneksi tunggal SQLite in-memory.
+
+### 3.28 APScheduler Cron Jobs & AI Financial Insights Guardrail
+- **Penjadwalan Otomatis (`APScheduler`):**
+  - `FinanceSchedulerManager` (`BackgroundScheduler(timezone="Asia/Jakarta")`) mendaftarkan dua job `CronTrigger`: `generate_semester_billing` (awal semester Februari/Agustus) dan `daily_overdue_and_reminder` (harian pukul 07:00 untuk memperbarui denda/status `overdue` dan mengirim pengingat idempoten per hari `reminder:<billing_id>:<tanggal>`). Lifecycle dikelola lewat `lifespan` FastAPI (dinonaktifkan otomatis saat `pytest` berjalan).
+- **AI Financial Insights (Deterministik + Narasi LLM Tervalidasi):**
+  - Seluruh kalkulasi angka laporan (`total_revenue_bulan_ini`, `collection_rate_percent`, `top_10_tunggakan`, dan `mahasiswa_tunggakan_lebih_2_bulan` `Z` dengan batas `> 60` hari) dihitung secara deterministik dari DB maupun CSV (`nim, jumlah, tanggal, status`) di `finance_calculator.py`.
+  - `LLMClient` hanya menerima metrik agregat teranonimasi (tanpa NIM/PII) untuk menyusun `ringkasan_eksekutif` dan `saran_tindak_lanjut` tervalidasi Pydantic (`AINarrativeOutput`), dengan *deterministic fallback* apabila API key LLM tidak tersedia atau keluaran tidak valid.
+
 ## 4. Trade-off yang Dipertimbangkan
 1. **Inheritance & Polymorphism vs Flat Database Models**
    - *Kelebihan*: Menerapkan *Open/Closed Principle* dan *Liskov Substitution Principle* secara ketat pada domain OOP.
@@ -232,4 +264,16 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 18. **Audit Trail via Satu Transaksi `GradeService` vs Database Trigger (+ `StubPresensiPort`)**
     - *Kelebihan*: Menyimpan `diubah_oleh` (`dosen_id`) dan `alasan` secara portabel di SQLite maupun MySQL/PostgreSQL dalam satu unit atomik `try/commit/rollback`, sementara `PresensiPort` memungkinkan pengembangan & pengujian penuh Minggu 9 tanpa menunggu Modul Presensi Minggu 12.
     - *Kekurangan*: Perubahan nilai langsung lewat SQL manual di luar aplikasi tidak terekam ke `grade_history` (diatasi di produksi dengan membatasi akses tulis langsung), dan fitur presensi nyata bergantung pada injeksi implementasi `PresensiPort` baru pada Minggu 12.
+19. **Tabel Keuangan Baru (`payment_method`, `billing`, `payment`) vs Modifikasi Tabel Legacy `payments`**
+    - *Kelebihan*: Menjamin tipe `NUMERIC(14, 2)` (`Decimal`), `UniqueConstraint(nim, semester)`, dan `transaction_id` unik tanpa merusak tes awal Minggu 1–4 yang menguji skema polymorphic `Payment` (`Float`).
+    - *Kekurangan*: Terdapat dua definisi tabel terkait pembayaran (`payments` legacy vs `payment` baru) hingga modul PMB/KRS awal diselaraskan penuh pada integrasi akhir.
+20. **Pemblokiran KRS via `BillingGuardPort` di `KRSManager` + `TunggakanValidator` Opsional vs Mengubah `default_validators()`**
+    - *Kelebihan*: Menjaga 48 *Property-Based Tests* (`default_validators` & `recommend_krs_csp`) tetap terisolasi dan deterministik tanpa membutuhkan database billing, sambil menegakkan pemblokiran KRS terpadu (`add_course`, `remove_course`, `submit_krs`) ketika mahasiswa memiliki tagihan belum lunas (`unpaid`/`partial`/`overdue`).
+    - *Kekurangan*: Pemanggilan `DefaultValidator` tanpa `KRSManager` perlu menambahkan `TunggakanValidator()` secara eksplisit jika ingin mengecek tunggakan di luar `KRSManager`.
+21. **APScheduler `BackgroundScheduler` In-Process vs Worker Antrean Terpisah (Celery + Redis)**
+    - *Kelebihan*: Zero broker eksternal (`+0` Redis/RabbitMQ), langsung berjalan bersama FastAPI `lifespan` pada satu proses pengembangan/demo, dan mudah diuji dengan `session_factory` in-memory.
+    - *Kekurangan*: Pada deployment multi-worker/multi-replica (`uvicorn --workers > 1`), scheduler in-process perlu diganti dengan proses worker tunggal atau distributed lock agar cron job tidak berjalan ganda di tiap replica.
+22. **Agregasi Deterministik + Narasi LLM Teranonimasi vs Mengirim Data Mentah CSV ke LLM**
+    - *Kelebihan*: Menghilangkan risiko salah hitung/halusinasi angka pada total pendapatan, *collection rate*, top 10 tunggakan, dan rekomendasi `Z` mahasiswa, sekaligus menjaga privasi NIM/data pribadi tidak terkirim ke API eksternal.
+    - *Kekurangan*: Analisis AI hanya menghasilkan narasi/saran eksekutif dari metrik teragregasi dan tidak menemukan anomali tersembunyi di tingkat baris mentah yang belum didefinisikan pada `analyze_payment_records()`.
 

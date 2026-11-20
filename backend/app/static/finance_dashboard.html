@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Keuangan (SPP) — Sevima-Mini</title>
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #dc2626;
+      --danger-bg: #fef2f2;
+      --warning: #d97706;
+      --warning-bg: #fffbeb;
+      --success: #16a34a;
+      --success-bg: #f0fdf4;
+      --info: #0284c7;
+      --info-bg: #f0f9ff;
+      --radius: 12px;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    header {
+      background: linear-gradient(135deg, #0f172a, #1e3a8a);
+      color: #fff;
+      padding: 20px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    header h1 { margin: 0; font-size: 1.35rem; font-weight: 700; }
+    header p { margin: 4px 0 0; font-size: 0.9rem; color: #cbd5e1; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .auth-bar {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 12px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid #334155;
+      font-size: 0.88rem;
+    }
+    .auth-inputs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .auth-inputs input {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #1e293b;
+      color: #fff;
+      font-size: 0.85rem;
+    }
+
+    .container { max-width: 1280px; margin: 24px auto; padding: 0 20px 48px; }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .kpi-label { font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+    .kpi-value { font-size: 1.5rem; font-weight: 800; margin-top: 6px; }
+    .kpi-sub { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+
+    .btn {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { background: #15803d; }
+    .btn-warning { background: var(--warning); color: #fff; }
+    .btn-warning:hover { background: #b45309; }
+    .btn-outline { background: #fff; color: var(--text); border-color: var(--border); }
+    .btn-outline:hover { background: #f8fafc; }
+    .btn-sm { padding: 5px 10px; font-size: 0.78rem; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-paid { background: var(--success-bg); color: var(--success); }
+    .badge-partial { background: var(--info-bg); color: var(--info); }
+    .badge-unpaid { background: var(--warning-bg); color: var(--warning); }
+    .badge-overdue { background: var(--danger-bg); color: var(--danger); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+    th, td {
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+    }
+    th { font-size: 0.78rem; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+
+    .progress-wrap {
+      background: #e2e8f0;
+      border-radius: 999px;
+      height: 10px;
+      width: 100%;
+      overflow: hidden;
+    }
+    .progress-fill {
+      background: linear-gradient(90deg, #2563eb, #16a34a);
+      height: 100%;
+    }
+
+    .row-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    input[type="text"], input[type="number"], input[type="date"], select, textarea {
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.86rem;
+      font-family: inherit;
+    }
+    textarea { width: 100%; min-height: 105px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.8rem; }
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      margin: 8px 0 0;
+    }
+    .toast {
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 0.88rem;
+      display: none;
+    }
+    .toast.show { display: block; }
+    .toast-ok { background: var(--success-bg); color: var(--success); border: 1px solid #bbf7d0; }
+    .toast-err { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+    .muted { color: var(--muted); font-size: 0.84rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Dashboard Keuangan (SPP) — Sevima-Mini</h1>
+      <p>Manajemen tagihan semester, pembayaran, blokir KRS tunggakan, webhook gateway, &amp; AI Financial Insights</p>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-outline" onclick="seedDemoData()">Muat Data Demo</button>
+      <button class="btn btn-primary" onclick="generateBillingNow()">Generate Billing Semester</button>
+      <button class="btn btn-warning" onclick="refreshOverdueNow()">Cek Overdue &amp; Reminder</button>
+      <button class="btn btn-success" onclick="loadAll()">Refresh Data</button>
+    </div>
+  </header>
+
+  <div class="auth-bar">
+    <div class="auth-inputs">
+      <span><strong>Login Admin Akademik:</strong></span>
+      <input type="text" id="loginEmail" value="admin.akademik@sevima.ac.id" placeholder="Email Admin" />
+      <input type="password" id="loginPassword" value="admin123" placeholder="Password" />
+      <button class="btn btn-primary btn-sm" onclick="loginAdmin()">Login Admin</button>
+    </div>
+    <div id="authStatus">Belum login (klik Login Admin untuk mengakses API)</div>
+  </div>
+
+  <div class="container">
+    <div id="toast" class="toast"></div>
+
+    <div class="grid-4">
+      <div class="card">
+        <div class="kpi-label">Total Tagihan SPP</div>
+        <div class="kpi-value" id="kpiTotalBilled">Rp 0</div>
+        <div class="kpi-sub" id="kpiStudentCount">0 mahasiswa terdata</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Total Terbayar</div>
+        <div class="kpi-value" style="color: var(--success);" id="kpiTotalPaid">Rp 0</div>
+        <div class="kpi-sub" id="kpiPaidCount">0 mahasiswa lunas</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Sisa Tunggakan</div>
+        <div class="kpi-value" style="color: var(--danger);" id="kpiTotalOutstanding">Rp 0</div>
+        <div class="kpi-sub" id="kpiBlockedCount">0 mahasiswa diblokir KRS</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Collection Rate</div>
+        <div class="kpi-value" style="color: var(--primary);" id="kpiCollectionRate">0%</div>
+        <div class="kpi-sub" id="kpiSemesterLabel">Semester: ALL</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>Collection Rate per Program Studi</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Prodi</th>
+              <th>Lunas / Total</th>
+              <th>Collection Rate</th>
+              <th>Terkumpul</th>
+            </tr>
+          </thead>
+          <tbody id="prodiTableBody">
+            <tr><td colspan="4" class="muted">Belum ada data tagihan.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Grafik Pembayaran per Bulan</h2>
+        <div id="monthlyChartContainer" class="muted">Belum ada transaksi pembayaran sukses.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>
+        <span>Ringkasan Pembayaran per Mahasiswa &amp; Status Blokir KRS</span>
+        <span class="row-controls" style="margin-bottom:0;">
+          <input type="text" id="filterSemester" placeholder="Filter semester (mis. 20251)" />
+          <select id="payMethodSelect">
+            <option value="VA_BCA">VA_BCA</option>
+            <option value="VA_BNI">VA_BNI</option>
+            <option value="QRIS">QRIS</option>
+            <option value="BANK_TRANSFER">BANK_TRANSFER</option>
+            <option value="MANUAL_CASH">MANUAL_CASH</option>
+          </select>
+        </span>
+      </h2>
+      <table>
+        <thead>
+          <tr>
+            <th>NIM &amp; Nama</th>
+            <th>Prodi</th>
+            <th>Total Tagihan</th>
+            <th>Sudah Bayar</th>
+            <th>Sisa</th>
+            <th>Status</th>
+            <th>KRS</th>
+            <th>Aksi Cepat</th>
+          </tr>
+        </thead>
+        <tbody id="studentTableBody">
+          <tr><td colspan="8" class="muted">Login dan muat data untuk melihat ringkasan mahasiswa.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>
+          <span>AI Financial Insights (JSON Output)</span>
+          <button class="btn btn-primary btn-sm" onclick="loadLiveAIReport()">Generate dari DB</button>
+        </h2>
+        <p class="muted" style="margin-top:0;">Analisis CSV (`nim, jumlah, tanggal, status`) atau data DB secara real-time:</p>
+        <textarea id="csvInput">nim,jumlah,tanggal,status
+2025001-0101,5000000,2026-11-05,paid
+2025001-0102,5000000,2026-11-10,unpaid
+2025001-0103,2000000,2026-11-08,partial
+2025001-0104,4000000,2026-08-15,overdue
+2025001-0105,5200000,2026-08-01,overdue</textarea>
+        <div class="row-controls" style="margin-top:8px;">
+          <button class="btn btn-outline btn-sm" onclick="analyzeCSVReport()">Analisis CSV &rarr; JSON</button>
+        </div>
+        <pre id="aiReportJson">Belum ada laporan AI dijalankan.</pre>
+      </div>
+
+      <div class="card">
+        <h2>Simulasi Payment Webhook &amp; cURL</h2>
+        <div class="row-controls">
+          <input type="number" id="whBillingId" placeholder="Billing ID" style="width:110px;" />
+          <input type="number" id="whAmount" placeholder="Nominal (Rp)" style="width:150px;" />
+          <input type="text" id="whTxId" placeholder="Transaction ID" value="GW-TEST-001" style="width:160px;" />
+          <button class="btn btn-success btn-sm" onclick="simulateWebhook()">Sign &amp; Kirim Webhook</button>
+        </div>
+        <pre id="webhookCurlPreview">Klik tombol "Simulasi Webhook" pada baris mahasiswa atau isi form di atas.</pre>
+
+        <h2 style="margin-top:18px;">APScheduler Jobs &amp; Receipt Email Terakhir</h2>
+        <pre id="schedulerAndReceipts">Memuat status scheduler &amp; receipt...</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let authToken = localStorage.getItem("sevima_finance_token") || "";
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatRupiah(val) {
+      const num = Math.round(Number(val || 0));
+      return "Rp " + num.toLocaleString("id-ID");
+    }
+
+    function showToast(msg, isError = false) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.className = "toast show " + (isError ? "toast-err" : "toast-ok");
+    }
+
+    function authHeaders(extra = {}) {
+      const headers = { ...extra };
+      if (authToken) headers["Authorization"] = "Bearer " + authToken;
+      return headers;
+    }
+
+    async function apiFetch(url, options = {}) {
+      const resp = await fetch(url, {
+        ...options,
+        headers: authHeaders(options.headers || {}),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      return data;
+    }
+
+    async function loginAdmin() {
+      try {
+        const email = document.getElementById("loginEmail").value.trim();
+        const password = document.getElementById("loginPassword").value;
+        const data = await apiFetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        authToken = data.access_token;
+        localStorage.setItem("sevima_finance_token", authToken);
+        document.getElementById("authStatus").textContent = "Terautentikasi sebagai Admin Akademik";
+        showToast("Login Admin berhasil.");
+        await loadAll();
+      } catch (err) {
+        showToast("Login gagal: " + err.message, true);
+      }
+    }
+
+    async function seedDemoData() {
+      try {
+        const res = await apiFetch("/api/finance/seed-demo?semester=20251", { method: "POST" });
+        showToast(res.detail);
+        await loadAll();
+      } catch (err) {
+        showToast("Seed demo gagal: " + err.message, true);
+      }
+    }
+
+    async function generateBillingNow() {
+      try {
+        const sem = document.getElementById("filterSemester").value.trim() || "20251";
+        const res = await apiFetch("/api/finance/billings/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ semester: sem }),
+        });
+        showToast(`Generate semester ${res.semester}: ${res.created_count} tagihan baru, ${res.skipped_count} dilewati.`);
+        await loadAll();
+      } catch (err) {
+        showToast("Generate billing gagal: " + err.message, true);
+      }
+    }
+
+    async function refreshOverdueNow() {
+      try {
+        const res = await apiFetch("/api/finance/billings/refresh-overdue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reminder_before_days: 3 }),
+        });
+        showToast(`Overdue: ${res.overdue_updated}, Denda diperbarui: ${res.late_fees_applied}, Reminder: ${res.reminders_sent}.`);
+        await loadAll();
+      } catch (err) {
+        showToast("Cek overdue gagal: " + err.message, true);
+      }
+    }
+
+    async function payManual(billingId, remaining) {
+      try {
+        const methodCode = document.getElementById("payMethodSelect").value;
+        const amountStr = prompt("Masukkan nominal pembayaran (Rp):", remaining);
+        if (!amountStr) return;
+        const res = await apiFetch("/api/finance/payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            billing_id: billingId,
+            amount: amountStr,
+            method_code: methodCode,
+            notes: "Pembayaran via Dashboard Keuangan",
+          }),
+        });
+        showToast(res.detail);
+        await loadAll();
+      } catch (err) {
+        showToast("Pembayaran gagal: " + err.message, true);
+      }
+    }
+
+    async function quickWebhook(billingId, remaining) {
+      document.getElementById("whBillingId").value = billingId;
+      document.getElementById("whAmount").value = remaining;
+      document.getElementById("whTxId").value = "WH-" + Date.now();
+      await simulateWebhook();
+    }
+
+    async function simulateWebhook() {
+      try {
+        const billingId = Number(document.getElementById("whBillingId").value);
+        const amount = document.getElementById("whAmount").value;
+        const txId = document.getElementById("whTxId").value.trim();
+        const method = document.getElementById("payMethodSelect").value;
+        if (!billingId || !amount || !txId) {
+          showToast("Isi Billing ID, Nominal, dan Transaction ID untuk webhook.", true);
+          return;
+        }
+        const signed = await apiFetch("/api/finance/webhook/sign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            billing_id: billingId,
+            transaction_id: txId,
+            amount,
+            status: "paid",
+            payment_method: method,
+          }),
+        });
+        const ack = await fetch("/api/finance/webhook", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Webhook-Signature": signed.signature,
+          },
+          body: signed.payload_json,
+        }).then((r) => r.json());
+
+        document.getElementById("webhookCurlPreview").textContent =
+          "=== cURL Terverifikasi ===\n" +
+          signed.curl_command +
+          "\n\n=== Respons Webhook ===\n" +
+          JSON.stringify(ack, null, 2);
+
+        showToast(ack.message || "Webhook diproses.");
+        await loadAll();
+      } catch (err) {
+        showToast("Webhook gagal: " + err.message, true);
+      }
+    }
+
+    async function loadLiveAIReport() {
+      try {
+        const sem = document.getElementById("filterSemester").value.trim();
+        const qs = sem ? `?semester=${encodeURIComponent(sem)}` : "";
+        const data = await apiFetch("/api/finance/ai-report" + qs);
+        document.getElementById("aiReportJson").textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        showToast("Gagal memuat AI Report: " + err.message, true);
+      }
+    }
+
+    async function analyzeCSVReport() {
+      try {
+        const csvData = document.getElementById("csvInput").value;
+        const data = await apiFetch("/api/finance/ai-report/csv", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csv_data: csvData }),
+        });
+        document.getElementById("aiReportJson").textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        showToast("Analisis CSV gagal: " + err.message, true);
+      }
+    }
+
+    function renderMonthlyChart(items) {
+      const container = document.getElementById("monthlyChartContainer");
+      if (!items || items.length === 0) {
+        container.innerHTML = '<div class="muted">Belum ada transaksi pembayaran sukses.</div>';
+        return;
+      }
+      const maxVal = Math.max(...items.map((x) => Number(x.total_amount)), 1);
+      const width = 460;
+      const height = 180;
+      const barWidth = Math.max(28, Math.min(64, Math.floor((width - 40) / items.length) - 12));
+      const bars = items
+        .map((item, i) => {
+          const val = Number(item.total_amount);
+          const barH = Math.max(8, Math.round((val / maxVal) * 115));
+          const x = 24 + i * (barWidth + 16);
+          const y = 135 - barH;
+          return `
+            <g>
+              <rect x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="4" fill="#2563eb"></rect>
+              <text x="${x + barWidth / 2}" y="${y - 5}" text-anchor="middle" font-size="10" fill="#0f172a">${escapeHtml((val / 1000000).toFixed(1))}jt</text>
+              <text x="${x + barWidth / 2}" y="155" text-anchor="middle" font-size="11" fill="#475569">${escapeHtml(item.month)}</text>
+            </g>`;
+        })
+        .join("");
+      container.innerHTML = `<svg viewBox="0 0 ${Math.max(width, items.length * 80)} ${height}" width="100%" height="180">${bars}</svg>`;
+    }
+
+    async function loadAll() {
+      if (!authToken) return;
+      try {
+        const sem = document.getElementById("filterSemester").value.trim();
+        const qs = sem ? `?semester=${encodeURIComponent(sem)}` : "";
+        const [dash, sched, receipts] = await Promise.all([
+          apiFetch("/api/finance/dashboard" + qs),
+          apiFetch("/api/finance/scheduler/jobs"),
+          apiFetch("/api/finance/receipts"),
+        ]);
+
+        document.getElementById("kpiTotalBilled").textContent = formatRupiah(dash.total_tagihan);
+        document.getElementById("kpiTotalPaid").textContent = formatRupiah(dash.total_terbayar);
+        document.getElementById("kpiTotalOutstanding").textContent = formatRupiah(dash.total_tunggakan);
+        document.getElementById("kpiCollectionRate").textContent = dash.overall_collection_rate + "%";
+        document.getElementById("kpiStudentCount").textContent = `${dash.total_mahasiswa} mahasiswa terdata`;
+        document.getElementById("kpiPaidCount").textContent = `${dash.mahasiswa_lunas} mahasiswa lunas`;
+        document.getElementById("kpiBlockedCount").textContent = `${dash.mahasiswa_menunggak} mahasiswa diblokir KRS`;
+        document.getElementById("kpiSemesterLabel").textContent = `Semester: ${dash.semester}`;
+
+        const prodiBody = document.getElementById("prodiTableBody");
+        prodiBody.innerHTML = dash.per_prodi.length
+          ? dash.per_prodi
+              .map(
+                (p) => `
+              <tr>
+                <td><strong>${escapeHtml(p.nama_prodi)}</strong><br /><span class="muted">${escapeHtml(p.fakultas)}</span></td>
+                <td>${p.lunas_count} / ${p.total_tagihan_count}</td>
+                <td>
+                  <div style="min-width:110px;">
+                    <strong>${escapeHtml(p.collection_rate)}%</strong>
+                    <div class="progress-wrap"><div class="progress-fill" style="width:${Number(p.collection_rate)}%;"></div></div>
+                  </div>
+                </td>
+                <td>${formatRupiah(p.total_collected)}</td>
+              </tr>`
+              )
+              .join("")
+          : '<tr><td colspan="4" class="muted">Belum ada data prodi.</td></tr>';
+
+        renderMonthlyChart(dash.monthly_payments);
+
+        const stuBody = document.getElementById("studentTableBody");
+        stuBody.innerHTML = dash.students.length
+          ? dash.students
+              .map(
+                (s) => `
+              <tr>
+                <td><strong>${escapeHtml(s.nim)}</strong><br />${escapeHtml(s.nama_mahasiswa)}</td>
+                <td>${escapeHtml(s.program_studi)}</td>
+                <td>${formatRupiah(s.total_tagihan)}</td>
+                <td>${formatRupiah(s.sudah_bayar)}</td>
+                <td><strong>${formatRupiah(s.sisa)}</strong></td>
+                <td><span class="badge badge-${escapeHtml(s.status)}">${escapeHtml(s.status)}</span></td>
+                <td>${
+                  s.krs_blocked
+                    ? '<span class="badge badge-overdue">DIBLOKIR</span>'
+                    : '<span class="badge badge-paid">IZIN KRS</span>'
+                }</td>
+                <td>
+                  ${
+                    s.krs_blocked && s.latest_billing_id
+                      ? `<button class="btn btn-primary btn-sm" onclick="payManual(${s.latest_billing_id}, '${escapeHtml(s.sisa)}')">Bayar Manual</button>
+                         <button class="btn btn-success btn-sm" onclick="quickWebhook(${s.latest_billing_id}, '${escapeHtml(s.sisa)}')">Simulasi Webhook</button>`
+                      : '<span class="muted">Lunas</span>'
+                  }
+                </td>
+              </tr>`
+              )
+              .join("")
+          : '<tr><td colspan="8" class="muted">Belum ada tagihan mahasiswa.</td></tr>';
+
+        document.getElementById("schedulerAndReceipts").textContent = JSON.stringify(
+          { scheduler: sched, recent_email_logs: receipts.slice(0, 5) },
+          null,
+          2
+        );
+        await loadLiveAIReport();
+      } catch (err) {
+        showToast("Gagal memuat dashboard: " + err.message, true);
+      }
+    }
+
+    if (authToken) {
+      document.getElementById("authStatus").textContent = "Token tersimpan — memuat data...";
+      loadAll();
+    }
+  </script>
+</body>
+</html>

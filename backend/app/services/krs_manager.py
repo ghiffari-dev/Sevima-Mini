@@ -10,6 +10,7 @@ from app.models.krs import (
     Actor,
     ForbiddenError,
     KRS,
+    KRSBillingBlockedError,
     KRSDetail,
     KRSError,
     KRSForbiddenError,
@@ -23,6 +24,8 @@ from app.models.krs import (
     TransitionError,
 )
 from app.models.schedule import Kelas as KelasJadwal
+from app.services.billing_service import BillingGuardPort, SQLAlchemyBillingGuard
+from app.services.finance_calculator import ZERO, format_rupiah, quantize_money, to_decimal
 from app.services.krs_validator import (
     KRSContext,
     ValidationResult,
@@ -44,11 +47,30 @@ class KRSManager:
         validators: list[Validator] | None = None,
         semester: str = "20251",
         dosen_pa_id: int | None = None,
+        billing_guard: BillingGuardPort | None = None,
     ) -> None:
         self.db, self.semester = db, semester
         self.dosen_pa_id = dosen_pa_id
         self.validators = validators if validators is not None else default_validators()
         self.chain = build_chain(self.validators)
+        self.billing_guard: BillingGuardPort = (
+            billing_guard if billing_guard is not None else SQLAlchemyBillingGuard(db)
+        )
+
+    def _cek_tunggakan_spp(self, nim: str) -> None:
+        """Memblokir pengisian/perubahan/submit KRS apabila ada tagihan SPP yang belum lunas (403)."""
+        unpaid = self.billing_guard.get_unpaid_billings(nim)
+        if not unpaid:
+            return
+        total_sisa = sum(
+            (quantize_money(to_decimal(b.remaining)) for b in unpaid),
+            start=ZERO,
+        )
+        statuses = ", ".join(sorted({b.status.value for b in unpaid}))
+        raise KRSBillingBlockedError(
+            f"Pengisian KRS diblokir: mahasiswa {nim} masih memiliki {len(unpaid)} "
+            f"tagihan SPP belum lunas (status: {statuses}, sisa: {format_rupiah(total_sisa)})"
+        )
 
     def _krs_terkunci(self, nim: str) -> KRS:
         """Mengambil KRS mahasiswa di semester aktif dengan FOR UPDATE (atau buat DRAFT jika belum ada)."""
@@ -132,6 +154,7 @@ class KRSManager:
         self._cek_kepemilikan_mahasiswa(krs, requester_nim)
         if krs.status not in EDITABLE:
             raise KRSLockedError(f"KRS {krs.status.value} tidak bisa diubah")
+        self._cek_tunggakan_spp(nim)
 
         stmt_mk = (
             select(MataKuliah)
@@ -189,6 +212,7 @@ class KRSManager:
         self._cek_kepemilikan_mahasiswa(krs, requester_nim)
         if krs.status not in EDITABLE:
             raise KRSLockedError(f"KRS {krs.status.value} tidak bisa diubah")
+        self._cek_tunggakan_spp(nim)
 
         detail = next((d for d in krs.details if d.kode_mk == kode_mk), None)
         if detail is None:
@@ -210,6 +234,7 @@ class KRSManager:
             krs = self._krs_terkunci(nim)
             self._cek_kepemilikan_mahasiswa(krs, requester_nim)
             krs.cek_transisi(KRSStatus.SUBMITTED, Actor.MAHASISWA)  # 409
+            self._cek_tunggakan_spp(nim)
 
             if not krs.details:
                 raise KRSError("KRS kosong: tambahkan minimal satu mata kuliah")

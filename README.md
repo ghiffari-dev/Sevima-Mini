@@ -32,8 +32,13 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
   - **Penjaga Input Nilai 2 Lapis (`GradeService` & `PresensiPort` DIP Stub):** Validasi endpoint idempoten `PUT /api/kelas/{kelas_id}/nilai/{nim}` via `NilaiIn` (`^[A-E]$` $\rightarrow$ `422`), autentikasi JWT `get_current_dosen`, penjaga pertama `is_pengampu(kelas_id, dosen_id)` via tabel `jadwal` (`403 Forbidden`), penguncian baris `KRSDetail` dengan `with_for_update()` (`404`), dan penjaga kedua presensi $\ge 75\%$ melalui protokol `PresensiPort` (`StubPresensiPort` sementara hingga Modul Presensi Minggu 12, `< 75%` $\rightarrow$ `422`).
   - **Audit Trail `grade_history` (Append-Only) & SQL View `riwayat_nilai`:** Perubahan nilai (termasuk input pertama dengan `nilai_lama = NULL`) beserta stempel waktu UTC dan `alasan` wajib (saat ubah nilai) ditulis dalam **satu transaksi atomik** bersama update `krs_detail.nilai`, lalu disajikan lewat SQL View `riwayat_nilai` (`GET /api/mahasiswa/{nim}/riwayat-nilai`).
   - **Kalkulator IPS & IPK Presisi `Decimal` (*Functional Core, Imperative Shell*):** Fungsi murni `rata`, `hitung_ips`, dan `hitung_ipk` memakai `Decimal` dengan pembulatan `ROUND_HALF_UP` (`0.01`) sekali di akhir (`3.125 -> 3.13`, total SKS nol $\rightarrow$ `0.00`, mata kuliah ulang memilih bobot terbaik per `kode_mk` sebelum menyaring `lulus`), didukung `NilaiRepo` & `GPACalculator` (*compute-on-read* dengan respons string 2 desimal) serta pembanding SQL CTE `calculate_ipk_sql` (`ROW_NUMBER()` + `NULLIF`), dan form web dosen `/dashboard/grades`.
-- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`d4e5f6grd010 (head)`), dan skrip inisialisasi database.
-- **Automated Testing (149 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine (`40`), *Property-Based Testing* KRS (`48`: **2×1000 contoh acak** SKS & bentrok, **42 transisi ilegal** dari 48 kombinasi, **200 contoh CSP**), integrasi PMB (`8`), API KRS (`6`), Modul Jadwal (`24`: 7 kasus bug AI, 2×300 properti & differential test `Sort & Sweep` vs `Naive`, 4 tes Minggu 8, RBAC, & `.ics`), serta Modul Nilai Minggu 9 (`23` di `test_grade.py`: **11 kasus IPK** berparameter, **3 kasus IPS**, **1 tes tukar skala `D` lulus**, **3×300 properti `Hypothesis`** IPK $\in [0,4]$ / tambah `A` monotonik / invarian permutasi, differential test SQL CTE, `GradeService` atomik/403/404/422/FK/view, dan API + UI `/dashboard/grades`).
+- **Database & Migrasi:** SQLite dengan SQLAlchemy 2.0 ORM (`Mapped` & `mapped_column`), Alembic migrations (`e5f6g7fin011 (head)`), dan skrip inisialisasi database.
+- **Modul Keuangan / SPP (Minggu 11):**
+  - **Payment Schema & Migrasi (`e5f6g7fin011`):** Tabel `payment_method` (`VA_BCA`, `VA_BNI`, `QRIS`, `BANK_TRANSFER`, `MANUAL_CASH`), `billing` (`unpaid`, `partial`, `paid`, `overdue`, `UniqueConstraint(nim, semester)`), `payment` (`transaction_id` unik), serta kolom `program_studi.biaya_spp` bertipe `NUMERIC(14, 2)` / `Decimal` (ROUND_HALF_UP). Ambiguitas spesifikasi dicatat di [`repo-structure/docs/stakeholder-questions-minggu-11.md`](repo-structure/docs/stakeholder-questions-minggu-11.md).
+  - **Billing Service & Pemblokiran KRS (`BillingGuardPort` & `TunggakanValidator`):** `generate_billing()` untuk mahasiswa aktif (Teknik Rp 5.000.000, Ekonomi Rp 4.000.000, jatuh tempo `+14` hari, idempoten), `process_payment()` atomik dengan `.with_for_update()` dan logika **cicilan kumulatif** (`amount_paid + amount` vs `amount + late_fee`), perhitungan denda terkonfigurasi (`2%` per 30 hari, cap `10%`, `grace_days=0`), serta **blokir KRS** (`403 KRSBillingBlockedError`) di `add_course`, `remove_course`, dan `submit_krs` selama mahasiswa memiliki tagihan `unpaid`/`partial`/`overdue` (terbuka otomatis saat `paid`).
+  - **Payment Webhook Simulation & Receipt Email:** Endpoint `POST /api/finance/webhook` dengan verifikasi `HMAC-SHA256` (`X-Webhook-Signature`), idempotensi `transaction_id`, penanganan status non-sukses (`failed`/`pending`), dan simulasi kwitansi email via `LogChannel("EMAIL")` + tabel `notifikasi`.
+  - **APScheduler Cron Jobs, Dashboard Keuangan, & AI Financial Insights:** `FinanceSchedulerManager` (`generate_semester_billing` & `daily_overdue_and_reminder`) yang dikelola via `lifespan` FastAPI, endpoint agregasi real-time `/api/finance/dashboard` & UI `/dashboard/finance` (ringkasan mahasiswa, *collection rate* per prodi, grafik pembayaran bulanan), serta `/api/finance/ai-report` dan `/api/finance/ai-report/csv` dengan agregasi deterministik (`total_revenue_bulan_ini`, *collection rate*, top 10 tunggakan, rekomendasi reminder `Z` mahasiswa tunggakan `>2` bulan) + narasi AI tervalidasi Pydantic & *fallback* deterministik.
+- **Automated Testing (180 Passed):** Piramida pengujian lengkap menggunakan `pytest` dan `hypothesis` mencakup unit test validator & state machine (`40`), *Property-Based Testing* KRS (`48`: **2×1000 contoh acak** SKS & bentrok, **42 transisi ilegal** dari 48 kombinasi, **200 contoh CSP**), integrasi PMB (`8`), API KRS (`6`), Modul Jadwal (`24`: 7 kasus bug AI, 2×300 properti & differential test `Sort & Sweep` vs `Naive`, 4 tes Minggu 8, RBAC, & `.ics`), Modul Nilai Minggu 9 (`23` di `test_grade.py`), serta Modul Keuangan Minggu 11 (`31` di `test_finance.py`: unit test terparameterisasi denda/status/tarif/HMAC, **2×200 properti `Hypothesis`**, integrasi `BillingService`, webhook HMAC + idempotensi, blokir/buka blokir KRS, `APScheduler`, AI Insights CSV/DB, RBAC dashboard, & UI `/dashboard/finance`).
 
 ## Ringkasan Endpoint API, State Machine KRS, & Alur Penjadwalan
 
@@ -74,8 +79,21 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 | **Grades** | `GET /api/mahasiswa/{nim}/ipk` | — | `200` | Hitung IPK kumulatif (*compute-on-read*, nilai terbaik per MK lulus, string 2 desimal) |
 | **Grades** | `GET /api/mahasiswa/{nim}/riwayat-nilai` | — | `200` | Riwayat perubahan nilai mahasiswa dari SQL View `riwayat_nilai` |
 | **Grades** | `POST /api/grades/seed-demo` | — | `200` | Muat skenario data dummy `Rina` (presensi 90%) & `Budi` (presensi 70%) |
+| **Finance** | `GET /api/finance/payment-methods` | — | `200` | Daftar metode pembayaran SPP aktif (`VA_BCA`, `VA_BNI`, `QRIS`, dll.) |
+| **Finance** | `POST /api/finance/billings/generate` | `semester`, `semester_start` (opsional) | `200`, `401`, `403`, `422` | Generate tagihan SPP semester mahasiswa aktif (RBAC Admin) |
+| **Finance** | `POST /api/finance/billings/refresh-overdue` | `as_of`, `reminder_before_days` | `200`, `401`, `403` | Hitung denda keterlambatan, update `overdue`, & kirim reminder (RBAC Admin) |
+| **Finance** | `GET /api/finance/billings` | Query `nim`, `semester`, `status` | `200`, `401`, `403` | Daftar tagihan SPP beserta filter (RBAC Admin) |
+| **Finance** | `POST /api/finance/payments` | `billing_id`, `amount`, `method_code` | `201`, `401`, `403`, `404`, `409`, `422` | Catat pembayaran manual atomik & update status kumulatif (RBAC Admin) |
+| **Finance** | `POST /api/finance/webhook` | Payload gateway + header `X-Webhook-Signature` | `200`, `401`, `404`, `422` | Terima webhook gateway terverifikasi HMAC-SHA256 (idempoten) & kirim receipt |
+| **Finance** | `POST /api/finance/webhook/sign` | `billing_id`, `transaction_id`, `amount`, `status` | `200`, `401`, `403` | Helper signing HMAC-SHA256 & contoh perintah `curl` (RBAC Admin) |
+| **Finance** | `GET /api/finance/dashboard` | Query `semester` (opsional) | `200`, `401`, `403` | Data real-time per mahasiswa, collection rate prodi, & grafik bulanan (RBAC Admin) |
+| **Finance** | `GET /api/finance/students/{nim}/summary` | Query `semester` (opsional) | `200` | Ringkasan tagihan, terbayar, sisa, & status blokir KRS mahasiswa |
+| **Finance** | `GET /api/finance/ai-report` & `POST .../csv` | Query `as_of` / body `csv_data` | `200`, `401`, `403`, `422` | Laporan AI Financial Insights JSON dari DB atau CSV (RBAC Admin) |
+| **Finance** | `GET /api/finance/scheduler/jobs` & `.../receipts` | — | `200`, `401`, `403` | Status cron job `APScheduler` & log simulasi receipt email (RBAC Admin) |
+| **Finance** | `POST /api/finance/seed-demo` | Query `semester` | `200`, `401`, `403` | Muat skenario demo tagihan Teknik/Ekonomi, cicilan, & `overdue` (RBAC Admin) |
 | **UI** | `GET /dashboard/conflicts` | — | `200` | Halaman **Conflict Resolver UI** (dengan bilah login Admin JWT) |
 | **UI** | `GET /dashboard/grades` | — | `200` | Halaman **Form Input Nilai Dosen & Audit Trail** (dengan bilah login Dosen JWT) |
+| **UI** | `GET /dashboard/finance` | — | `200` | Halaman **Dashboard Keuangan (SPP), Webhook Simulator, & AI Insights** |
 
 ### Alur Transisi Sah State Machine KRS
 
@@ -101,6 +119,12 @@ Sistem Informasi Akademik Mini (Sevima-Mini) adalah aplikasi berbasis Object-Ori
 2. **Audit Trail Atomik (`grade_history` & `riwayat_nilai`):** Jika nilai sama, endpoint bersifat idempoten (*no-op*); jika mengubah nilai lama, `alasan` wajib diisi (`422`). Penambahan baris `grade_history` (`nilai_lama` nullable untuk input pertama, UTC) dan pembaruan `krs_detail.nilai` dikomit dalam satu transaksi DB, lalu terbaca melalui SQL View `riwayat_nilai`.
 3. **IPS & IPK Presisi `Decimal` (*Compute-on-Read*):** `GPACalculator` membaca `records(nim)` (`nilai IS NOT NULL`) dan `skala_nilai` dari `NilaiRepo` lalu menyerahkannya ke fungsi murni `hitung_ips` dan `hitung_ipk` (`Decimal` + `ROUND_HALF_UP` sekali di akhir, bobot terbaik per `kode_mk` lebih dulu baru menyaring `lulus == True`). Nilai dikirim ke API sebagai string 2 desimal agar tidak terkonversi ke `float`.
 
+### Alur Modul Keuangan / SPP (Minggu 11)
+
+1. **Generator Tagihan & Penjadwalan `APScheduler`:** `BillingService.generate_billing()` membuat tagihan awal semester secara idempoten (`UniqueConstraint(nim, semester)`) bagi seluruh mahasiswa berstatus `approved` dengan jatuh tempo `+14` hari dan tarif dari `program_studi.biaya_spp` / fallback konfigurasi (`Teknik = 5jt`, `Ekonomi = 4jt`). `FinanceSchedulerManager` menjalankan cron awal semester (`generate_semester_billing`) dan cek harian pukul 07:00 (`daily_overdue_and_reminder`) untuk memperbarui denda/status `overdue` serta mengirim reminder otomatis.
+2. **Pemrosesan Pembayaran Kumulatif, Webhook HMAC, & Receipt:** `process_payment()` mengunci baris `Billing` (`.with_for_update()`), mengevaluasi **total terbayar kumulatif** (`amount_paid + amount` vs `amount + late_fee`), mencatat `PaymentTransaction` (`transaction_id` unik) dan `Notifikasi` dalam satu transaksi ACID, lalu mengirim simulasi receipt email via `LogChannel("EMAIL")`. Endpoint `POST /api/finance/webhook` memverifikasi signature `HMAC-SHA256` sebelum memproses transaksi secara idempoten.
+3. **Blokir KRS & AI Financial Insights:** `KRSManager` (via `BillingGuardPort`) menolak `add_course`, `remove_course`, dan `submit_krs` dengan HTTP `403` (`KRSBillingBlockedError`) bila mahasiswa memiliki tagihan `unpaid`/`partial`/`overdue` dan langsung membuka akses begitu status menjadi `paid`. Endpoint `/api/finance/ai-report` dan `/api/finance/ai-report/csv` menghitung angka revenue, *collection rate*, top 10 tunggakan, dan rekomendasi tunggakan `>2` bulan secara deterministik sebelum meminta narasi teranonimasi dari `LLMClient`.
+
 ## Struktur Proyek
 
 ```text
@@ -116,9 +140,10 @@ repo-structure/
 │   └── sequence-schedule-observer.mmd  # Diagram sekuens Observer Pattern & Jadwal (Mermaid)
 ├── docs/
 │   ├── ADR-architecture-decisions.md  # Keputusan Arsitektur Sistem (ADR-001)
-│   └── stakeholder-questions-minggu-9.md  # Klarifikasi kontradiksi spesifikasi >= D (2.0) ke stakeholder
+│   ├── stakeholder-questions-minggu-9.md   # Klarifikasi kontradiksi spesifikasi >= D (2.0) ke stakeholder
+│   └── stakeholder-questions-minggu-11.md  # Klarifikasi celah & asumsi konfigurasi Modul Keuangan (Minggu 11)
 └── prompts/
-    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML & arsitektur (Log 01–16)
+    └── ai-usage-log.md          # Catatan penggunaan AI selama perancangan UML & arsitektur (Log 01–17)
 
 backend/
 ├── alembic/                     # Migrasi database Alembic
@@ -131,36 +156,45 @@ backend/
 │       ├── a1b2c3sch007_tabel_jadwal_ruangan.py
 │       ├── b2c3d4sch008_refactor_domain_jadwal.py
 │       ├── c3d4e5sch009_outbox_dan_sequence_jadwal.py
-│       └── d4e5f6grd010_skala_nilai_grade_history.py
+│       ├── d4e5f6grd010_skala_nilai_grade_history.py
+│       └── e5f6g7fin011_tabel_keuangan_spp.py
 ├── alembic.ini                  # Konfigurasi Alembic
 ├── app/
-│   ├── core/                    # Konfigurasi (DB, Security JWT Admin & get_current_dosen, env AI)
+│   ├── core/                    # Konfigurasi (DB, Security JWT Admin & get_current_dosen, env AI & Keuangan)
 │   ├── models/                  # Model SQLAlchemy 2.0 ORM
+│   │   ├── finance.py           # Billing, PaymentTransaction, PaymentMethod, BillingStatus, & FinanceError (Minggu 11)
 │   │   ├── grade.py             # SkalaNilai, GradeHistory, RIWAYAT_NILAI_VIEW_SQL, GradeError, & Grade legacy
 │   │   ├── schedule.py          # Model Ruangan, Dosen, Kelas, Jadwal (sequence), Outbox, & ScheduleError (Minggu 7–8)
-│   │   └── ...                  # Model PMB, KRS (KRSDetail FK skala_nilai), User, Course, Enrollment, Payment
+│   │   └── ...                  # Model PMB, KRS (KRSBillingBlockedError & FK skala_nilai), User, Course, Enrollment, Payment
 │   ├── repositories/            # Repository Pattern (IPMBRepository & SQLite)
 │   ├── routers/                 # Endpoint FastAPI
 │   │   ├── auth.py              # Endpoint Login JWT Admin & Dosen (/api/auth/login)
+│   │   ├── finance.py           # Endpoint Tagihan SPP, Webhook HMAC, Dashboard, Scheduler, & AI Report (/api/finance)
 │   │   ├── grade.py             # Endpoint Input Nilai, IPS/IPK, Riwayat, & Seed Demo (/api/kelas/*/nilai/*, /api/mahasiswa/*)
 │   │   ├── pmb.py               # Endpoint PMB (/api/pmb)
 │   │   ├── krs.py               # Endpoint KRS & CSP Recommender (/api/krs)
 │   │   └── schedule.py          # Endpoint Jadwal, Outbox, Conflict, AI, .ics, & Logs (/api/schedules)
-│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py & grade.py NilaiIn/NilaiOut)
+│   ├── schemas/                 # Skema Validasi Pydantic (termasuk schedule.py, grade.py, & finance.py)
 │   ├── services/                # Business Logic Layer
+│   │   ├── billing_service.py   # BillingService, BillingGuardPort, Webhook HMAC, Email Receipt, & Dashboard (Minggu 11)
 │   │   ├── calendar_exporter.py # Ekspor iCalendar RFC 5545 (.ics) dengan CRLF, UID, RRULE UTC, & SEQUENCE
 │   │   ├── conflict_detector.py # Detektor bentrok Naive & Grouping + Sort & Sweep + cek_kapasitas
+│   │   ├── finance_ai_report.py # AI Financial Insights JSON (deterministik + LLMClient + fallback)
+│   │   ├── finance_calculator.py # Pure core Decimal (denda, status tagihan, tarif SPP, HMAC, & parser CSV)
+│   │   ├── finance_scheduler.py # Penjadwalan otomatis APScheduler (generate semester & reminder harian)
 │   │   ├── gpa_calculator.py    # Pure core Decimal (rata, hitung_ips, hitung_ipk), NilaiRepo, GPACalculator, & SQL CTE
 │   │   ├── grade_service.py     # PresensiPort + StubPresensiPort & GradeService (403, FOR UPDATE, audit trail 1 transaksi)
 │   │   ├── schedule_observer.py # Observer Protocol, LogChannel (idempotency key), & OutboxDispatcher
 │   │   ├── schedule_recommender.py # LLMClient + 4 Saringan Pydantic/Kapasitas/Bentrok + Rule-Based Fallback
 │   │   ├── scheduling_service.py   # Layanan Penjadwalan (locking pesimis, SQL conflict, Outbox & KRS ACID)
-│   │   └── ...                  # pmb_service, krs_manager, krs_validator, krs_recommender
+│   │   └── ...                  # pmb_service, krs_manager, krs_validator (TunggakanValidator), krs_recommender
 │   ├── static/                  # Dashboard & Form Web UI
 │   │   ├── conflict_resolver.html
+│   │   ├── finance_dashboard.html # Dashboard Keuangan SPP, Simulator Webhook, & AI Insights (/dashboard/finance)
 │   │   └── grade_input.html     # Form web input nilai dosen pengampu & audit trail (/dashboard/grades)
-│   └── main.py                  # Entry Point FastAPI, Exception Handler, & Dashboard UI
+│   └── main.py                  # Entry Point FastAPI, Lifespan Scheduler, Exception Handler, & Dashboard UI
 ├── tests/
+│   ├── test_finance.py          # Unit, 2 Properti Hypothesis, Webhook HMAC, Blokir KRS, APScheduler, AI Report, & UI (Minggu 11)
 │   ├── test_grade.py            # Unit (11 IPK + 3 IPS + tukar skala), 3 Properti Hypothesis, Integration, & API/UI (Minggu 9)
 │   ├── test_krs_api.py          # API Integration Testing KRS (TestClient)
 │   ├── test_krs_property.py     # Property-Based Testing (Hypothesis) & 42 Transisi Ilegal (48 Kombinasi)
@@ -169,16 +203,16 @@ backend/
 ├── test_models_and_schemas.py   # Unit & Integration Test Model, Validator, & State Machine KRS
 ├── test_pmb.py                  # API Integration Testing PMB (Pytest)
 ├── requirements.txt             # Daftar Dependensi Python
-└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6–9)
+└── ai-usage-log.md              # Catatan penggunaan AI pengembangan backend & refleksi OPAR (Minggu 6–11)
 ```
 
 ## Teknologi & Tools
 
 - **Bahasa Pemrograman:** Python
-- **Backend Framework:** FastAPI, Uvicorn
+- **Backend Framework & Scheduler:** FastAPI, Uvicorn, APScheduler
 - **ORM, Migrasi, & Database:** SQLAlchemy 2.0, Alembic, SQLite
 - **Validasi, HTTP Client, & Pengujian:** Pydantic, `httpx` (integrasi opsional LLM API), Pytest, Hypothesis
-- **Frontend Admin UI:** HTML5, CSS3, Vanilla JavaScript (`/dashboard/conflicts`)
+- **Frontend Admin UI:** HTML5, CSS3, Vanilla JavaScript (`/dashboard/conflicts`, `/dashboard/grades`, `/dashboard/finance`)
 - **Diagrams:** Mermaid (.mmd) untuk Class Diagram & Sequence Diagram, PlantUML (.puml) untuk Use Case Diagram
 - **Dokumentasi & Arsitektur:** Markdown, Architecture Decision Records (ADR), OPAR
 
@@ -199,7 +233,7 @@ backend/
    ```
 5. **Menjalankan Seluruh Test Suite (Lintas OS — Windows PowerShell & Linux/macOS):**
    ```bash
-   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py backend/tests/test_grade.py -v
+   pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py backend/tests/test_grade.py backend/tests/test_finance.py -v
    ```
 6. **Menjalankan Server Backend (dari folder `backend/` agar terhubung ke `backend/pmb.db` hasil migrasi Alembic):**
    ```bash
@@ -208,7 +242,15 @@ backend/
    * Akses dokumentasi API interaktif (Swagger UI) di: http://127.0.0.1:8000/docs
    * Akses **Conflict Resolver Admin UI** di: http://127.0.0.1:8000/dashboard/conflicts (klik **Login Admin** dengan akun demo `admin.akademik@sevima.ac.id` / `admin123`, lalu klik **Muat Data Demo Bentrok**).
    * Akses **Form Input Nilai Dosen & Audit Trail** di: http://127.0.0.1:8000/dashboard/grades (klik **Muat Data Demo (Rina 90% & Budi 70%)**, lalu klik **Login Dosen Pengampu** dengan akun demo `dosen.pengampu@sevima.ac.id` / `dosen123`).
+   * Akses **Dashboard Keuangan (SPP)** di: http://127.0.0.1:8000/dashboard/finance (login Admin `admin.akademik@sevima.ac.id` / `admin123`, lalu klik **Muat Data Demo** untuk menguji tagihan Teknik/Ekonomi, blokir KRS, simulasi webhook + cURL, serta AI Financial Insights).
    * Unduh jadwal kuliah dalam format **iCalendar (.ics)** di: http://127.0.0.1:8000/api/schedules/export.ics (opsional `?semester=20251&nim=2025001-0001`).
+   * **Simulasi Uji Webhook Payment Gateway (`curl`):** hasilkan payload & signature valid melalui `POST /api/finance/webhook/sign` (atau tombol *Simulasi Webhook* di `/dashboard/finance`), lalu kirim ke:
+     ```bash
+     curl -X POST http://127.0.0.1:8000/api/finance/webhook \
+       -H "Content-Type: application/json" \
+       -H "X-Webhook-Signature: <HMAC_SHA256_SIGNATURE>" \
+       -d '{"transaction_id":"GW-TEST-001","amount":"5000000.00","status":"paid","payment_method":"VA_BCA","billing_id":1}'
+     ```
 
 ## Lisensi
 

@@ -462,6 +462,52 @@ Mengimplementasikan seluruh cakupan **Minggu ke-9 (Materi 5: Modul Nilai & Trans
 3. **Mengapa memilih *compute-on-read* untuk IPK dan transaksi `GradeService` untuk `grade_history`?** *Compute-on-read* menjamin IPK selalu akurat tanpa risiko cache basi untuk ~60 baris nilai per mahasiswa; sedangkan pencatatan audit di `GradeService` dalam satu transaksi DB menangkap `diubah_oleh` dan `alasan` secara portabel di SQLite maupun MySQL/PostgreSQL tanpa duplikasi dengan trigger.
 
 
+## Log 16 — Modul Keuangan / SPP (Minggu 11): Payment Schema `e5f6g7fin011`, `BillingService`, Webhook HMAC-SHA256, Blokir KRS, APScheduler, Dashboard, & AI Financial Insights
+
+### Tujuan
+Mengimplementasikan seluruh cakupan **Minggu 11: Modul Keuangan (SPP)** pada branch `tugas-11` beserta integrasi penuh ke modul KRS, Auth RBAC, dan Notifikasi:
+1. **Payment Schema & Migrasi (`e5f6g7fin011`):** Menambahkan tabel `payment_method`, `billing` (`unpaid`, `partial`, `paid`, `overdue`, `UniqueConstraint(nim, semester)`), `payment` (`transaction_id` unik), serta kolom `program_studi.biaya_spp` bertipe `NUMERIC(14, 2)` / `Decimal`.
+2. **Billing Service & Cron Jobs (`APScheduler`):** `generate_billing()` untuk mahasiswa aktif (Teknik Rp 5jt, Ekonomi Rp 4jt, jatuh tempo +14 hari), `process_payment()` atomik (`with_for_update()`), perhitungan denda keterlambatan terkonfigurasi (`2%/bulan` maks `10%`, `grace_days=0`), serta `FinanceSchedulerManager` (`BackgroundScheduler` + `CronTrigger` awal semester & harian 07:00).
+3. **Pemblokiran KRS Saat Ada Tunggakan:** Memblokir `add_course`, `remove_course`, dan `submit_krs` (`403 KRSBillingBlockedError`) apabila mahasiswa memiliki tagihan berstatus `unpaid`, `partial`, atau `overdue` via `BillingGuardPort` (serta `TunggakanValidator`).
+4. **Payment Webhook Simulation & Receipt Email:** Endpoint `POST /api/finance/webhook` dengan verifikasi `HMAC-SHA256`, idempotensi `transaction_id`, penanganan status gagal/pending, dan simulasi pengiriman receipt email via `LogChannel("EMAIL")` + tabel `notifikasi`.
+5. **Dashboard Keuangan & AI Financial Insights:** Endpoint real-time `/api/finance/dashboard`, halaman `/dashboard/finance`, serta laporan JSON deterministik (`total_revenue_bulan_ini`, `collection_rate_percent`, `top_10_tunggakan`, `Z` mahasiswa tunggakan `>2` bulan) + narasi AI tervalidasi Pydantic dengan *fallback* deterministik.
+
+### Perintah (Prompt)
+> "Analisis spesifikasi Minggu 11: Modul Keuangan (SPP) terhadap codebase `Sevima-Mini`, laporkan celah/ambiguitas terlebih dahulu, lalu implementasikan dengan keputusan:
+> 1. Pemblokiran KRS berlaku untuk semua tagihan yang belum lunas (`unpaid`, `partial`, `overdue`).
+> 2. Denda keterlambatan memakai konfigurasi default (`Settings` / `LateFeeConfig`: 2% per 30 hari, cap 10%, grace 0 hari) berbasis `Decimal`.
+> 3. Lengkapi dengan dokumentasi ADR, pertanyaan stakeholder (`stakeholder-questions-minggu-11.md`), AI usage log + OPAR, PR template, dan pembaruan `README.md`."
+
+### Revisi Manual & Bug yang Ditemukan Saat Verifikasi
+1. **Bug Cicilan Kumulatif pada Pseudo-Code Spesifikasi:** Spesifikasi menulis `amount < billing.total -> 'partial'`, padahal cicilan tahap ke-2 (mis. 2jt + 3jt = 5jt) akan salah tetap berstatus `partial`. Diperbaiki dengan mengevaluasi akumulasi `amount_paid + amount` terhadap `total_due` (`determine_billing_status`).
+2. **`inspect(db.get_bind()).has_table(...)` Memicu `ROLLBACK` pada SQLite `SingletonThreadPool`:** Pengecekan keberadaan tabel di `SQLAlchemyBillingGuard` dan `TunggakanValidator` sempat memanggil `inspect(db.get_bind())` yang membuka koneksi sementara pada pool tunggal in-memory SQLite dan me-`rollback` baris `KRS` yang baru di-`flush()` (`StaleDataError` pada 6 test KRS/Jadwal). Diperbaiki menjadi `inspect(db.connection()).has_table(...)` agar memakai koneksi transaksi sesi aktif.
+3. **Atribut `job.next_run_time` pada APScheduler 3.11.3 Sebelum `start()`:** Mengakses `job.next_run_time` secara langsung saat scheduler belum berjalan memicu `AttributeError`; diperbaiki dengan `getattr(job, "next_run_time", None)`.
+4. **Tanggal Jatuh Tempo pada Test Fixture (`2026-11-01` vs `2026-11-20`):** Penetapan `semester_start="2026-11-01"` membuat `due_date="2026-11-15"` otomatis berstatus `overdue` pada tanggal pengujian `2026-11-20`; diselaraskan menggunakan `date.today().isoformat()` untuk skenario pembayaran tepat waktu.
+
+### Hasil (Hasil Implementasi)
+- **Model, Exception Polimorfik, & Migrasi:** `backend/app/models/finance.py`, pembaruan `program_studi.py`, `krs.py` (`KRSBillingBlockedError`), `__init__.py`, dan migrasi `backend/alembic/versions/e5f6g7fin011_tabel_keuangan_spp.py` (`ISOLATED_MIGRATION_OK` untuk siklus `upgrade head -> downgrade d4e5f6grd010 -> upgrade head`; `backend/pmb.db` pada `e5f6g7fin011 (head)`).
+- **Layanan & Functional Core:** `backend/app/services/finance_calculator.py`, `billing_service.py`, `finance_ai_report.py`, `finance_scheduler.py`, serta integrasi di `krs_validator.py` dan `krs_manager.py`.
+- **API, Lifespan, & UI:** `backend/app/schemas/finance.py`, `backend/app/routers/finance.py`, `backend/app/main.py` (`lifespan` APScheduler, `@app.exception_handler(FinanceError)`, `/dashboard/finance`), dan `backend/app/static/finance_dashboard.html`.
+- **Test Suite (`backend/tests/test_finance.py` — 31 tests):** Parameterized unit tests (denda, status, tarif, HMAC), 2 *Property-Based Tests* `Hypothesis` (2×200 contoh), integrasi `BillingService`, webhook HMAC + idempotensi, blokir & buka blokir KRS, lifecycle `APScheduler`, AI Financial Insights (CSV + DB + guardrail `FakeLLMClient`), RBAC dashboard, dan HTML UI.
+- **Verifikasi Penuh `pytest` (7 file suite):** **180 passed, 0 failed** (`149` test sebelumnya + `31` test baru di `test_finance.py`).
+
+### OPAR (Observe – Plan – Act – Reflect)
+- **Observe:** Spesifikasi Minggu 11 memuat pseudo-code cicilan tunggal yang rentan bug kumulatif, tidak menetapkan rumus denda secara eksplisit, rawan duplikasi saldo jika webhook dikirim ulang (*retry*), dan berisiko membuat LLM menghitung angka finansial secara keliru jika data mentah CSV langsung dikirim ke LLM. Selain itu, integrasi blokir KRS harus tidak merusak 149 test existing yang belum memiliki data tagihan.
+- **Plan:** Memisahkan tabel baru `payment_method`, `billing`, dan `payment` (`NUMERIC(14,2)`) dari tabel legacy `payments`, menyisipkan `BillingGuardPort` di `KRSManager` agar mahasiswa tanpa record tagihan tetap lolos sementara mahasiswa dengan tagihan `unpaid`/`partial`/`overdue` terblokir `403`, mengamankan webhook via HMAC-SHA256 + `transaction_id` unik + `with_for_update()`, menjadwalkan cron `APScheduler` lewat `lifespan`, dan menghitung seluruh metrik AI report secara deterministik sebelum meminta narasi teranonimasi dari `LLMClient`.
+- **Act:** Mengimplementasikan seluruh modul, migrasi Alembic `e5f6g7fin011`, dashboard `/dashboard/finance`, 31 test di `test_finance.py`, serta memperbaiki 3 temuan saat eksekusi (`inspect(db.connection())`, `getattr(job, "next_run_time", None)`, dan tanggal fixture test) hingga seluruh **180 test passed (0 failed)**.
+- **Reflect:** Pengiriman receipt dan reminder via email saat ini disimulasikan melalui `LogChannel("EMAIL")` + tabel `notifikasi` (belum terhubung ke SMTP server produksi), scheduler `APScheduler` in-process cocok untuk worker tunggal tetapi memerlukan pemisahan proses/lock jika di-deploy multi-worker, dan `FOR UPDATE` pada SQLite tidak menguji penguncian paralel antar-sesi seperti PostgreSQL/MySQL.
+
+### Evaluasi (Objektif)
+- **Kelebihan:** Seluruh kalkulasi uang dan laporan memakai `Decimal` + fungsi murni deterministik, webhook tahan *retry* dan pemalsuan signature, blokir KRS teruji end-to-end terbuka otomatis setelah pelunasan webhook, dan seluruh ambiguitas terdokumentasi resmi untuk stakeholder.
+- **Kekurangan / Kompleksitas Tambahan:** Mempertahankan tabel legacy `payments` bersama tabel baru `payment` sampai modul PMB/KRS awal disatukan sepenuhnya pada iterasi akhir.
+
+### Ringkasan Jawaban Viva (Tanpa AI)
+1. **Mengapa `determine_billing_status` harus mengevaluasi `amount_paid + amount`, bukan `amount` tunggal?** Karena pembayaran cicilan mengubah status secara kumulatif. Jika tagihan Rp 5 juta dibayar Rp 2 juta lalu Rp 3 juta, membandingkan pembayaran ke-2 (`3 juta < 5 juta`) akan salah mempertahankan status `partial` padahal total terbayar sudah `5 juta` (`paid`).
+2. **Bagaimana webhook gateway diamankan dari pemalsuan dan pengiriman ulang (*retry*)?** Pertama, payload mentah diverifikasi dengan `HMAC-SHA256` menggunakan `hmac.compare_digest` (`401` bila gagal). Kedua, kolom `payment.transaction_id` diberi constraint `UNIQUE` dan dicek di awal `process_payment()` sehingga retry dengan `transaction_id` sama langsung mengembalikan `200 OK` (`idempotent_replay=True`) tanpa menambah `amount_paid`.
+3. **Mengapa perhitungan angka pada AI Financial Insights tidak diserahkan ke LLM?** Karena LLM bersifat probabilistik dan rawan halusinasi aritmatika maupun melanggar privasi bila NIM mentah dikirim ke API luar. Backend menghitung revenue, *collection rate*, top 10 tunggakan, dan jumlah mahasiswa telat `>2` bulan (`Z`) secara deterministik di Python/`Decimal`, lalu LLM hanya menyusun ringkasan dari metrik agregat teranonimasi.
+
+
+
 
 
 

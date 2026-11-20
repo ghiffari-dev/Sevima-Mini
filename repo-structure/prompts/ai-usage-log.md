@@ -729,3 +729,26 @@ Mendokumentasikan penanganan kontradiksi spesifikasi (*"nilai >= D (2.0)"*), kep
 - **Catatan**: Saat integrasi Modul Presensi di Minggu 12 dan keluarnya jawaban stakeholder terkait nilai `D`, cukup menyuntikkan implementasi nyata `PresensiPort` dan/atau memperbarui 1 baris `skala_nilai` tanpa mengubah logika bisnis inti.
 
 ---
+
+## Log 17 — Klarifikasi Celah Spesifikasi & Pembaruan ADR Modul Keuangan SPP (Minggu 11)
+
+### Tujuan
+Mendokumentasikan hasil analisis spesifikasi **Minggu 11: Modul Keuangan (SPP)** beserta celah teknisnya ke [`repo-structure/docs/stakeholder-questions-minggu-11.md`](../docs/stakeholder-questions-minggu-11.md), memperbarui **ADR-001 (`3.24–3.28` & *trade-off* `19–22`)**, serta menyinkronkan catatan implementasi & OPAR pada branch `tugas-11`.
+
+### Perintah (Prompt)
+> "Analisis spesifikasi Minggu 11 (Modul Keuangan SPP), catat ambiguitas & celah implementasi ke `repo-structure/docs/stakeholder-questions-minggu-11.md`, dan perbarui `repo-structure/docs/ADR-architecture-decisions.md` mencakup:
+> 1. Skema `payment_method`, `billing`, `payment` (`NUMERIC(14,2)`) dan koeksistensi dengan tabel legacy `payments`.
+> 2. Perbaikan logika cicilan kumulatif, `BillingStatus` state machine, dan konfigurasi default denda (`LateFeeConfig`).
+> 3. Keamanan webhook HMAC-SHA256, idempotensi `transaction_id`, simulasi receipt email, dan pemblokiran KRS semua tagihan belum lunas (`BillingGuardPort`).
+> 4. Penjadwalan `APScheduler` dan guardrail deterministik pada AI Financial Insights."
+
+### Hasil
+- Terbentuknya [`repo-structure/docs/stakeholder-questions-minggu-11.md`](../docs/stakeholder-questions-minggu-11.md) yang merinci 6 celah/ambiguitas spesifikasi (bug pseudo-code cicilan tunggal, rumus denda belum ditentukan, status `overdue` + cicilan, cakupan blokir KRS, keterbatasan 4 kolom CSV, dan ketahanan webhook), 5 pertanyaan formal ke Bagian Keuangan/Akademik, serta mitigasi konfigurasi default (`Settings` / `LateFeeConfig`).
+- Pembaruan [`repo-structure/docs/ADR-architecture-decisions.md`](../docs/ADR-architecture-decisions.md) dengan sub-bab **3.24–3.28** serta *trade-off* **19–22**.
+- Pembaruan [`backend/ai-usage-log.md`](../../backend/ai-usage-log.md) (**Log 16** beserta OPAR & jawaban viva), [`.github/PULL_REQUEST_TEMPLATE.md`](../../.github/PULL_REQUEST_TEMPLATE.md), dan [`README.md`](../../README.md).
+
+### Evaluasi (Objektif)
+- **Kelebihan**: Keputusan bisnis yang belum dirinci di dokumen tugas (rumus denda & cakupan blokir KRS) tidak diputus secara implisit/hardcode, melainkan dibuat terkonfigurasi dan terdokumentasi rapi di ADR maupun daftar pertanyaan stakeholder.
+- **Catatan**: Pengaturan denda default (`2%`/30 hari, cap `10%`, grace `0` hari) dan tarif default SPP (`Teknik 5jt`, `Ekonomi 4jt`) dapat langsung disesuaikan lewat `.env` atau kolom `program_studi.biaya_spp` setelah konfirmasi stakeholder diterima.
+
+---

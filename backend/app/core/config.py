@@ -12,6 +12,15 @@ class Settings(BaseSettings):
     ADMIN_DEMO_PASSWORD: str = "admin123"
     DOSEN_DEMO_EMAIL: str = "dosen.pengampu@sevima.ac.id"
     DOSEN_DEMO_PASSWORD: str = "dosen123"
+    PAYMENT_WEBHOOK_SECRET: str = "sevima-webhook-secret-dev"
+    SPP_DEFAULT_AMOUNT: str = "4500000.00"
+    SPP_TEKNIK_AMOUNT: str = "5000000.00"
+    SPP_EKONOMI_AMOUNT: str = "4000000.00"
+    SPP_DUE_DAYS: int = 14
+    LATE_FEE_RATE_PER_MONTH: str = "0.02"
+    LATE_FEE_MAX_RATE: str = "0.10"
+    LATE_FEE_GRACE_DAYS: int = 0
+    FINANCE_SCHEDULER_ENABLED: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
