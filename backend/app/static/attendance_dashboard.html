@@ -203,11 +203,11 @@
       <div class="field-row">
         <label>Pilih Mahasiswa (NIM)
           <select id="scanNimSelect">
-            <option value="2025001-0101">2025001-0101 — Rina (Terdaftar)</option>
-            <option value="2025001-0102">2025001-0102 — Budi (Terdaftar)</option>
-            <option value="2025001-0103">2025001-0103 — Citra (Terdaftar)</option>
-            <option value="2025001-0104">2025001-0104 — Doni (Terdaftar)</option>
-            <option value="2025001-0105">2025001-0105 — Eka (Terdaftar)</option>
+            <option value="2025001-0101">2025001-0101 — Andi Pratama (Terdaftar)</option>
+            <option value="2025001-0102">2025001-0102 — Siti Rahma (Terdaftar)</option>
+            <option value="2025001-0103">2025001-0103 — Bima Sakti (Terdaftar)</option>
+            <option value="2025001-0104">2025001-0104 — Dewi Lestari (Terdaftar)</option>
+            <option value="2025001-0105">2025001-0105 — Farhan Nugroho (Terdaftar)</option>
             <option value="2025999-9999">2025999-9999 — Mahasiswa Kelas Lain (Ditolak 403)</option>
           </select>
         </label>
@@ -395,6 +395,19 @@
           <td><span class="badge ${p.warning_dibawah_75 ? 'err' : 'ok'}">${p.warning_dibawah_75 ? 'WARNING <75%' : 'AMAN'}</span></td>
         </tr>
       `).join('');
+
+      if (data.peserta && data.peserta.length > 0) {
+        const selectEl = document.getElementById('scanNimSelect');
+        const currentVal = selectEl.value;
+        const enrolledOptions = data.peserta.map(p =>
+          `<option value="${p.nim}">${p.nim} — ${p.nama} (Terdaftar)</option>`
+        ).join('');
+        selectEl.innerHTML = enrolledOptions +
+          `<option value="2025999-9999">2025999-9999 — Mahasiswa Kelas Lain (Ditolak 403)</option>`;
+        if ([...selectEl.options].some(o => o.value === currentVal)) {
+          selectEl.value = currentVal;
+        }
+      }
     }
 
     async function loadAIInsights() {
