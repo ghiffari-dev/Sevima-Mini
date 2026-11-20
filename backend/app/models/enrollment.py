@@ -15,7 +15,7 @@ class Enrollment(Base):
     pendaftaran_krs_id: Mapped[str | None] = mapped_column(String(50), ForeignKey("pendaftaran_krss.idPendaftaran"), nullable=True)
 
     mahasiswa: Mapped["Mahasiswa"] = relationship("Mahasiswa", back_populates="enrollments")
-    kelas: Mapped["Kelas"] = relationship("Kelas", back_populates="enrollments")
+    kelas: Mapped["Kelas"] = relationship("app.models.course.Kelas", back_populates="enrollments")
     pendaftaran_krs: Mapped["PendaftaranKRS | None"] = relationship("PendaftaranKRS", back_populates="enrollments")
     grade: Mapped["Grade | None"] = relationship("Grade", back_populates="enrollment", uselist=False, cascade="all, delete-orphan")
 

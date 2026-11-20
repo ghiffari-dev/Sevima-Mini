@@ -43,7 +43,7 @@ class PendaftaranKRS(Pendaftaran):
     dosen_pa_id: Mapped[str | None] = mapped_column(String(50), ForeignKey("dosens.id"), nullable=True)
 
     mahasiswa: Mapped["Mahasiswa"] = relationship("Mahasiswa", back_populates="pendaftaran_krs")
-    dosen_pa: Mapped["Dosen | None"] = relationship("Dosen", back_populates="krs_bimbingan")
+    dosen_pa: Mapped["Dosen | None"] = relationship("app.models.user.Dosen", back_populates="krs_bimbingan")
     enrollments: Mapped[list["Enrollment"]] = relationship("Enrollment", back_populates="pendaftaran_krs", cascade="all, delete-orphan")
     payment: Mapped["PembayaranKRS | None"] = relationship("PembayaranKRS", back_populates="pendaftaran_krs", uselist=False)
 

@@ -59,6 +59,7 @@ class KRSContext:
     details: list[KRSDetail]  # MK lain yang sudah ada di KRS
     mk_baru: MataKuliah
     db: Session | None = None
+    kelas_baru: Any = None
 
 
 @dataclass
@@ -269,15 +270,31 @@ class ConflictValidator(Validator):
     def check(self, ctx: KRSContext | KRSValidationContext) -> ValidationResult:
         if isinstance(ctx, KRSContext):
             mk_b = ctx.mk_baru
+            if ctx.kelas_baru is not None and getattr(ctx.kelas_baru, "jadwals", None):
+                slots_b = [
+                    (j.hari, j.jam_mulai, j.jam_selesai) for j in ctx.kelas_baru.jadwals
+                ]
+            else:
+                slots_b = mk_b.get_jadwal_slots()
+
             for d in ctx.details:
                 mk_a = d.matakuliah
-                if mk_a.hari == mk_b.hari:
-                    # Rumus irisan interval: dua rentang waktu bertumpuk jika start_a < end_b DAN start_b < end_a
-                    if mk_a.jam_mulai < mk_b.jam_selesai and mk_b.jam_mulai < mk_a.jam_selesai:
-                        return ValidationResult(
-                            False,
-                            f"Jadwal bentrok: {mk_b.nama} bertabrakan dengan {mk_a.nama}",
-                        )
+                if getattr(d, "kelas", None) is not None and getattr(d.kelas, "jadwals", None):
+                    slots_a = [
+                        (j.hari, j.jam_mulai, j.jam_selesai) for j in d.kelas.jadwals
+                    ]
+                else:
+                    slots_a = mk_a.get_jadwal_slots()
+
+                for hari_a, mulai_a, selesai_a in slots_a:
+                    for hari_b, mulai_b, selesai_b in slots_b:
+                        if hari_a == hari_b:
+                            # Rumus irisan interval: start_a < end_b DAN start_b < end_a
+                            if mulai_a < selesai_b and mulai_b < selesai_a:
+                                return ValidationResult(
+                                    False,
+                                    f"Jadwal bentrok: {mk_b.nama} bertabrakan dengan {mk_a.nama}",
+                                )
             return ValidationResult(True)
 
         n = len(ctx.selected_classes)

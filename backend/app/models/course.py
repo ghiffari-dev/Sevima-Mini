@@ -17,7 +17,7 @@ class Course(Base):
     nama: Mapped[str] = mapped_column(String(150), nullable=False)
     sks: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    kelas: Mapped[list["Kelas"]] = relationship("Kelas", back_populates="course")
+    kelas: Mapped[list["Kelas"]] = relationship("app.models.course.Kelas", back_populates="course")
     
     prasyarat: Mapped[list["Course"]] = relationship(
         "Course",
@@ -39,7 +39,7 @@ class Kelas(Base):
     dosen_id: Mapped[str | None] = mapped_column(String(50), ForeignKey("dosens.id"), nullable=True)
 
     course: Mapped["Course"] = relationship("Course", back_populates="kelas")
-    dosen: Mapped["Dosen | None"] = relationship("Dosen", back_populates="kelas")
+    dosen: Mapped["Dosen | None"] = relationship("app.models.user.Dosen", back_populates="kelas")
     schedules: Mapped[list["Schedule"]] = relationship("Schedule", back_populates="kelas", cascade="all, delete-orphan")
     enrollments: Mapped[list["Enrollment"]] = relationship("Enrollment", back_populates="kelas")
 
@@ -54,5 +54,5 @@ class Schedule(Base):
     ruangan: Mapped[str] = mapped_column(String(50), nullable=False)
     
     kelas_id: Mapped[str] = mapped_column(String(50), ForeignKey("kelass.id_kelas"), nullable=False)
-    kelas: Mapped["Kelas"] = relationship("Kelas", back_populates="schedules")
+    kelas: Mapped["Kelas"] = relationship("app.models.course.Kelas", back_populates="schedules")
 

@@ -1,21 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import time
-from typing import Any, Iterable
+from itertools import combinations
+from typing import Any, Callable, Iterable, Literal, Protocol
 
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
+from app.models.krs import KRS, KRSDetail
 from app.models.schedule import (
-    HARI_MAP,
-    JadwalKuliah,
+    Kelas,
+    Ruangan,
     ScheduleCapacityError,
     ScheduleError,
     normalize_hari,
 )
-from app.services.interval_tree import IntervalTree, to_minutes
+
+ConflictType = Literal["room_conflict", "lecturer_conflict"]
 
 
-def _parse_time_value(value: time | str) -> time:
-    """Mengonversi objek time atau string 'HH:MM' menjadi datetime.time."""
+def to_minutes(value: time | str) -> int:
+    """Mengonversi objek datetime.time atau string 'HH:MM' menjadi total menit sejak 00:00."""
+    if isinstance(value, time):
+        return value.hour * 60 + value.minute
+    cleaned = str(value).strip()
+    parts = cleaned.split(":")
+    if len(parts) < 2:
+        raise ScheduleError(f"Format jam tidak valid: {value}")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError as exc:
+        raise ScheduleError(f"Format jam tidak valid: {value}") from exc
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ScheduleError(f"Jam/menit di luar rentang valid: {value}")
+    return hour * 60 + minute
+
+
+def parse_time_value(value: time | str) -> time:
+    """Mengonversi objek time atau string 'H:MM'/'HH:MM' menjadi datetime.time."""
     if isinstance(value, time):
         return value
     cleaned = str(value).strip()
@@ -28,214 +53,183 @@ def _parse_time_value(value: time | str) -> time:
         raise ScheduleError(f"Format jam tidak valid: {value}") from exc
 
 
-@dataclass
-class ScheduleRecord:
-    """Representasi seragam satu entri jadwal untuk deteksi bentrok 3 dimensi."""
+def pasangan(a: int, b: int) -> tuple[int, int]:
+    """Mengurutkan dua ID jadwal agar pasangan (A, B) dan (B, A) menghasilkan konflik identik."""
+    return (a, b) if a <= b else (b, a)
 
-    id: int | str | None
-    kode_mk: str
-    nama_mk: str
+
+@dataclass(frozen=True)
+class Conflict:
+    """Representasi konflik jadwal immutable (hashable untuk set & Counter)."""
+
+    type: ConflictType
+    affected: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "affected": list(self.affected),
+        }
+
+
+class JadwalLike(Protocol):
+    """Protokol bersama antara ORM Jadwal dan dataclass ringan JadwalSlot."""
+
+    id: int
     hari: int
     jam_mulai: time
     jam_selesai: time
-    ruangan: str
-    dosen: str
-    enrolled_count: int = 0
-    kapasitas: int | None = None
-    enrolled_nims: set[str] = field(default_factory=set)
+    ruangan_kode: str
+    dosen_id: int
 
 
-def to_schedule_record(item: ScheduleRecord | JadwalKuliah | dict[str, Any]) -> ScheduleRecord:
-    """Mengonversi ScheduleRecord, ORM JadwalKuliah, atau dict menjadi ScheduleRecord."""
-    if isinstance(item, ScheduleRecord):
-        hari_num = normalize_hari(item.hari)
-        mulai = _parse_time_value(item.jam_mulai)
-        selesai = _parse_time_value(item.jam_selesai)
-        if mulai >= selesai:
-            raise ScheduleError("jam_mulai harus lebih awal daripada jam_selesai")
-        return ScheduleRecord(
-            id=item.id,
-            kode_mk=item.kode_mk,
-            nama_mk=item.nama_mk,
-            hari=hari_num,
-            jam_mulai=mulai,
-            jam_selesai=selesai,
-            ruangan=item.ruangan,
-            dosen=item.dosen,
-            enrolled_count=item.enrolled_count,
-            kapasitas=item.kapasitas,
-            enrolled_nims=set(item.enrolled_nims),
-        )
+@dataclass(frozen=True)
+class JadwalSlot:
+    """Versi ringan Jadwal tanpa ketergantungan ORM database."""
 
-    if isinstance(item, JadwalKuliah):
-        mk_nama = item.matakuliah.nama if item.matakuliah is not None else item.kode_mk
-        kap = item.ruangan.kapasitas if item.ruangan is not None else None
-        return ScheduleRecord(
-            id=item.id,
-            kode_mk=item.kode_mk,
-            nama_mk=mk_nama,
-            hari=normalize_hari(item.hari),
-            jam_mulai=item.jam_mulai,
-            jam_selesai=item.jam_selesai,
-            ruangan=item.ruangan_kode,
-            dosen=item.dosen,
-            enrolled_count=item.enrolled_count,
-            kapasitas=kap,
-        )
-
-    if isinstance(item, dict):
-        jam_mulai_raw = item.get("jam_mulai")
-        jam_selesai_raw = item.get("jam_selesai")
-        if (jam_mulai_raw is None or jam_selesai_raw is None) and item.get("jam"):
-            jam_str = str(item["jam"])
-            if "-" in jam_str:
-                jam_mulai_raw, jam_selesai_raw = jam_str.split("-", 1)
-        if jam_mulai_raw is None or jam_selesai_raw is None:
-            raise ScheduleError("Jadwal harus memiliki jam_mulai dan jam_selesai")
-
-        mulai = _parse_time_value(jam_mulai_raw)
-        selesai = _parse_time_value(jam_selesai_raw)
-        if mulai >= selesai:
-            raise ScheduleError("jam_mulai harus lebih awal daripada jam_selesai")
-
-        kode_mk = str(item.get("kode_mk", "") or "")
-        nama_mk = str(
-            item.get("nama_mk") or item.get("nama") or item.get("mata_kuliah") or kode_mk
-        )
-        nims = set(item.get("enrolled_nims") or [])
-        enrolled = int(item.get("enrolled_count", item.get("enrolled", len(nims))))
-        return ScheduleRecord(
-            id=item.get("id"),
-            kode_mk=kode_mk,
-            nama_mk=nama_mk,
-            hari=normalize_hari(item["hari"]),
-            jam_mulai=mulai,
-            jam_selesai=selesai,
-            ruangan=str(item.get("ruangan") or item.get("ruangan_kode") or ""),
-            dosen=str(item.get("dosen") or ""),
-            enrolled_count=enrolled,
-            kapasitas=item.get("kapasitas"),
-            enrolled_nims=nims,
-        )
-
-    raise ScheduleError(f"Tipe data jadwal tidak didukung: {type(item).__name__}")
+    id: int
+    hari: int
+    jam_mulai: time
+    jam_selesai: time
+    ruangan_kode: str
+    dosen_id: int
 
 
-def record_to_dict(rec: ScheduleRecord) -> dict[str, Any]:
-    """Mengubah ScheduleRecord menjadi dictionary serializable untuk API dan detail bentrok."""
-    mulai_str = rec.jam_mulai.strftime("%H:%M")
-    selesai_str = rec.jam_selesai.strftime("%H:%M")
-    return {
-        "id": rec.id,
-        "kode_mk": rec.kode_mk,
-        "nama_mk": rec.nama_mk,
-        "hari": rec.hari,
-        "hari_nama": HARI_MAP[rec.hari],
-        "jam_mulai": mulai_str,
-        "jam_selesai": selesai_str,
-        "jam": f"{mulai_str}-{selesai_str}",
-        "ruangan": rec.ruangan,
-        "dosen": rec.dosen,
-        "enrolled_count": rec.enrolled_count,
-        "kapasitas": rec.kapasitas,
-    }
+def _coerce_jadwal_list(schedules: Iterable[JadwalLike | dict[str, Any]]) -> list[JadwalLike]:
+    """Memastikan setiap item dapat diakses sebagai JadwalLike (ORM Jadwal / JadwalSlot)."""
+    result: list[JadwalLike] = []
+    for idx, item in enumerate(schedules, start=1):
+        if isinstance(item, dict):
+            jam_mulai_raw = item.get("jam_mulai")
+            jam_selesai_raw = item.get("jam_selesai")
+            if (jam_mulai_raw is None or jam_selesai_raw is None) and item.get("jam"):
+                jam_str = str(item["jam"])
+                if "-" in jam_str:
+                    jam_mulai_raw, jam_selesai_raw = jam_str.split("-", 1)
+            if jam_mulai_raw is None or jam_selesai_raw is None:
+                raise ScheduleError("Jadwal harus memiliki jam_mulai dan jam_selesai")
 
+            mulai = parse_time_value(jam_mulai_raw)
+            selesai = parse_time_value(jam_selesai_raw)
+            if mulai >= selesai:
+                raise ScheduleError("jam_mulai harus lebih awal daripada jam_selesai")
 
-def check_room_capacity(enrolled: int, capacity: int, ruangan: str) -> None:
-    """Memastikan jumlah mahasiswa terdaftar tidak melebihi kapasitas ruangan."""
-    if enrolled > capacity:
-        raise ScheduleCapacityError(
-            f"Jumlah mahasiswa ({enrolled}) melebihi kapasitas ruangan {ruangan} ({capacity})"
-        )
-
-
-def detect_schedule_conflict(
-    schedules: Iterable[ScheduleRecord | JadwalKuliah | dict[str, Any]],
-    *,
-    include_general_overlap: bool = False,
-) -> list[dict[str, Any]]:
-    """Mendeteksi bentrok jadwal 3 dimensi (waktu-ruangan-dosen) menggunakan Interval Tree.
-
-    Untuk setiap hari, membangun IntervalTree dari rentang menit [jam_mulai, jam_selesai).
-    Mengembalikan daftar konflik bertipe:
-    - 'room_conflict': hari sama, jam overlap, ruangan sama
-    - 'lecturer_conflict': hari sama, jam overlap, dosen sama
-    - 'time_overlap': hari sama, jam overlap untuk mahasiswa/MK yang sama (atau umum bila flag aktif)
-    """
-    records = [to_schedule_record(s) for s in schedules]
-    by_day: dict[int, list[ScheduleRecord]] = {}
-    for rec in records:
-        by_day.setdefault(rec.hari, []).append(rec)
-
-    conflicts: list[dict[str, Any]] = []
-    for hari in sorted(by_day):
-        tree = IntervalTree()
-        for rec in by_day[hari]:
-            tree.insert(to_minutes(rec.jam_mulai), to_minutes(rec.jam_selesai), rec)
-
-        for s1, s2 in tree.find_all_overlapping_pairs():
-            s1_dict = record_to_dict(s1)
-            s2_dict = record_to_dict(s2)
-            specific_emitted = False
-
-            r1 = s1.ruangan.strip().lower()
-            r2 = s2.ruangan.strip().lower()
-            if r1 and r1 == r2:
-                conflicts.append(
-                    {
-                        "type": "room_conflict",
-                        "affected_schedules": [s1_dict, s2_dict],
-                        "detail": (
-                            f"Bentrok ruangan {s1.ruangan} pada {HARI_MAP[hari]} "
-                            f"({s1_dict['jam']} vs {s2_dict['jam']})"
-                        ),
-                    }
-                )
-                specific_emitted = True
-
-            d1 = s1.dosen.strip().lower()
-            d2 = s2.dosen.strip().lower()
-            if d1 and d1 == d2:
-                conflicts.append(
-                    {
-                        "type": "lecturer_conflict",
-                        "affected_schedules": [s1_dict, s2_dict],
-                        "detail": (
-                            f"Bentrok dosen {s1.dosen} pada {HARI_MAP[hari]} "
-                            f"({s1_dict['jam']} vs {s2_dict['jam']})"
-                        ),
-                    }
-                )
-                specific_emitted = True
-
-            shared_nims = sorted(s1.enrolled_nims & s2.enrolled_nims)
-            same_course = bool(
-                s1.kode_mk
-                and s2.kode_mk
-                and s1.kode_mk.strip().lower() == s2.kode_mk.strip().lower()
-            )
-            if shared_nims or same_course or (include_general_overlap and not specific_emitted):
-                if shared_nims:
-                    reason = (
-                        f"Bentrok waktu mahasiswa ({', '.join(shared_nims)}) pada {HARI_MAP[hari]} "
-                        f"({s1_dict['jam']} vs {s2_dict['jam']})"
-                    )
-                elif same_course:
-                    reason = (
-                        f"Bentrok waktu mata kuliah sama ({s1.kode_mk}) pada {HARI_MAP[hari]} "
-                        f"({s1_dict['jam']} vs {s2_dict['jam']})"
-                    )
+            raw_id = item.get("id")
+            item_id = int(raw_id) if raw_id is not None else idx
+            raw_dosen = item.get("dosen_id")
+            if raw_dosen is None:
+                dosen_val = item.get("dosen")
+                if isinstance(dosen_val, int):
+                    raw_dosen = dosen_val
+                elif dosen_val is not None and str(dosen_val).strip():
+                    raw_dosen = abs(hash(str(dosen_val).strip().lower())) % 1_000_000_000 + 1
                 else:
-                    reason = (
-                        f"Irisan waktu jadwal pada {HARI_MAP[hari]} "
-                        f"({s1_dict['jam']} vs {s2_dict['jam']})"
-                    )
-                conflicts.append(
-                    {
-                        "type": "time_overlap",
-                        "affected_schedules": [s1_dict, s2_dict],
-                        "detail": reason,
-                    }
+                    # Gunakan nilai negatif unik agar entri tanpa dosen pada input dict tidak saling bentrok
+                    raw_dosen = -idx
+
+            result.append(
+                JadwalSlot(
+                    id=item_id,
+                    hari=normalize_hari(item["hari"]),
+                    jam_mulai=mulai,
+                    jam_selesai=selesai,
+                    ruangan_kode=str(
+                        item.get("ruangan_kode") or item.get("ruangan") or ""
+                    ).strip(),
+                    dosen_id=int(raw_dosen),
                 )
+            )
+        else:
+            result.append(item)
+    return result
+
+
+def detect_conflicts_naive(
+    schedules: Iterable[JadwalLike | dict[str, Any]],
+) -> list[Conflict]:
+    """Versi naif O(n^2) memakai itertools.combinations sebagai acuan (oracle) kebenaran."""
+    items = _coerce_jadwal_list(schedules)
+    conflicts: list[Conflict] = []
+    for a, b in combinations(items, 2):
+        if a.hari != b.hari:
+            continue
+        if not (a.jam_mulai < b.jam_selesai and b.jam_mulai < a.jam_selesai):
+            continue
+        if a.ruangan_kode != "" and a.ruangan_kode == b.ruangan_kode:
+            conflicts.append(Conflict("room_conflict", pasangan(a.id, b.id)))
+        if a.dosen_id is not None and a.dosen_id == b.dosen_id:
+            conflicts.append(Conflict("lecturer_conflict", pasangan(a.id, b.id)))
+    return conflicts
+
+
+ATURAN_KELOMPOK: dict[ConflictType, Callable[[JadwalLike], tuple[Any, ...]]] = {
+    "room_conflict": lambda j: (j.hari, j.ruangan_kode),
+    "lecturer_conflict": lambda j: (j.hari, j.dosen_id),
+}
+
+
+def detect_conflicts_sweep(
+    schedules: Iterable[JadwalLike | dict[str, Any]],
+) -> list[Conflict]:
+    """Versi teroptimasi O(n log n + k): Grouping per dimensi + Sort & Sweep half-open [mulai, selesai)."""
+    items = _coerce_jadwal_list(schedules)
+    conflicts: list[Conflict] = []
+
+    for ctype, key_fn in ATURAN_KELOMPOK.items():
+        groups: dict[tuple[Any, ...], list[JadwalLike]] = defaultdict(list)
+        for item in items:
+            dim_key = key_fn(item)
+            if dim_key[1] is None or dim_key[1] == "":
+                continue
+            groups[dim_key].append(item)
+
+        for group_items in groups.values():
+            if len(group_items) < 2:
+                continue
+            ordered = sorted(
+                group_items,
+                key=lambda j: (j.jam_mulai, j.jam_selesai, j.id),
+            )
+            aktif: list[JadwalLike] = []
+            for cur in ordered:
+                # Interval setengah terbuka: > (bukan >=) agar kuliah bersambung (mis. 09:40) tidak bentrok
+                aktif = [a for a in aktif if a.jam_selesai > cur.jam_mulai]
+                for a in aktif:
+                    conflicts.append(Conflict(ctype, pasangan(a.id, cur.id)))
+                aktif.append(cur)
 
     return conflicts
+
+
+detect_schedule_conflict = detect_conflicts_sweep
+
+
+def check_room_capacity(dibutuhkan: int, kapasitas: int, ruangan_kode: str) -> None:
+    """Memastikan kebutuhan kursi tidak melebihi kapasitas ruangan (409 Conflict jika penuh)."""
+    if dibutuhkan > kapasitas:
+        raise ScheduleCapacityError(
+            f"Kapasitas ruangan {ruangan_kode} ({kapasitas} kursi) tidak cukup: "
+            f"dibutuhkan {dibutuhkan} kursi"
+        )
+
+
+def cek_kapasitas(db: Session, ruangan: Ruangan, kelas: Kelas) -> None:
+    """Menghitung peserta terdaftar pada KRSDetail dan membandingkan max(kuota, terdaftar) <= kapasitas."""
+    stmt = (
+        select(func.count(KRSDetail.id))
+        .join(KRS, KRSDetail.krs_id == KRS.id)
+        .where(
+            KRS.semester == kelas.semester,
+            or_(
+                KRSDetail.kelas_id == kelas.id,
+                (KRSDetail.kelas_id.is_(None)) & (KRSDetail.kode_mk == kelas.kode_mk),
+            ),
+        )
+    )
+    terdaftar = int(db.scalar(stmt) or 0)
+    dibutuhkan = max(kelas.kuota, terdaftar)
+    if dibutuhkan > ruangan.kapasitas:
+        raise ScheduleCapacityError(
+            f"Kapasitas ruangan {ruangan.kode} ({ruangan.kapasitas} kursi) tidak cukup: "
+            f"dibutuhkan {dibutuhkan} kursi (kuota kelas={kelas.kuota}, terdaftar={terdaftar})"
+        )

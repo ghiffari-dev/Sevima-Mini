@@ -6,9 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db as get_orm_db
 from app.models.krs import MataKuliah
+from app.models.schedule import HARI_MAP
 from app.schemas.schedule import (
+    ClassCreate,
+    ClassResponse,
     ConflictDetectRequest,
     ConflictListResponse,
+    LecturerCreate,
+    LecturerResponse,
     NotificationLogResponse,
     RescheduleSuggestionResponse,
     RoomCreate,
@@ -19,7 +24,10 @@ from app.schemas.schedule import (
     ScheduleResponse,
     ScheduleUpdate,
 )
-from app.services.conflict_detector import detect_schedule_conflict
+from app.services.conflict_detector import (
+    JadwalSlot,
+    detect_conflicts_sweep,
+)
 from app.services.schedule_observer import default_notification_manager
 from app.services.scheduling_service import SchedulingService
 
@@ -44,10 +52,67 @@ def create_room(
 ):
     """Menambahkan ruangan baru ke database."""
     return service.create_room(
-        kode_ruangan=body.kode_ruangan,
+        kode=body.kode,
         nama=body.nama,
         kapasitas=body.kapasitas,
         gedung=body.gedung,
+    )
+
+
+@router.get("/lecturers", response_model=list[LecturerResponse], status_code=status.HTTP_200_OK)
+def list_lecturers(service: SchedulingService = Depends(get_scheduling_service)):
+    """Mengambil seluruh master dosen pengampu."""
+    return service.list_lecturers()
+
+
+@router.post("/lecturers", response_model=LecturerResponse, status_code=status.HTTP_201_CREATED)
+def create_lecturer(
+    body: LecturerCreate,
+    service: SchedulingService = Depends(get_scheduling_service),
+):
+    """Menambahkan dosen baru dengan NIDN unik."""
+    return service.create_lecturer(nidn=body.nidn, nama=body.nama)
+
+
+@router.get("/classes", response_model=list[ClassResponse], status_code=status.HTTP_200_OK)
+def list_classes(
+    semester: str | None = Query(default="20251"),
+    service: SchedulingService = Depends(get_scheduling_service),
+):
+    """Mengambil daftar kelas paralel beserta kuota dan mata kuliahnya."""
+    classes = service.list_classes(semester=semester)
+    return [
+        ClassResponse(
+            id=k.id,
+            kode_mk=k.kode_mk,
+            nama_mk=k.matakuliah.nama if k.matakuliah else k.kode_mk,
+            nama_kelas=k.nama_kelas,
+            kuota=k.kuota,
+            semester=k.semester,
+        )
+        for k in classes
+    ]
+
+
+@router.post("/classes", response_model=ClassResponse, status_code=status.HTTP_201_CREATED)
+def create_class(
+    body: ClassCreate,
+    service: SchedulingService = Depends(get_scheduling_service),
+):
+    """Menambahkan kelas paralel baru untuk sebuah mata kuliah."""
+    k = service.create_class(
+        kode_mk=body.kode_mk,
+        nama_kelas=body.nama_kelas,
+        kuota=body.kuota,
+        semester=body.semester,
+    )
+    return ClassResponse(
+        id=k.id,
+        kode_mk=k.kode_mk,
+        nama_mk=k.matakuliah.nama if k.matakuliah else k.kode_mk,
+        nama_kelas=k.nama_kelas,
+        kuota=k.kuota,
+        semester=k.semester,
     )
 
 
@@ -68,7 +133,11 @@ def list_schedules(
 ):
     """Menampilkan daftar seluruh jadwal kuliah pada semester tertentu."""
     schedules = service.list_schedules(semester=semester)
-    return [service.schedule_to_response_dict(j) for j in schedules]
+    nims_map = service._nims_by_class_ids(schedules)
+    return [
+        service.schedule_to_response_dict(j, nims_override=nims_map.get(j.id, set()))
+        for j in schedules
+    ]
 
 
 @router.post("", response_model=ScheduleMutationResponse, status_code=status.HTTP_201_CREATED)
@@ -76,16 +145,14 @@ def create_schedule(
     body: ScheduleCreate,
     service: SchedulingService = Depends(get_scheduling_service),
 ):
-    """Membuat jadwal kuliah baru dengan validasi kapasitas & deteksi bentrok 3D."""
+    """Membuat jadwal kuliah baru dengan penguncian pesimis, cek bentrok SQL, & cek kapasitas."""
     return service.create_schedule(
-        kode_mk=body.kode_mk,
+        kelas_id=body.kelas_id,
         ruangan_kode=body.ruangan_kode,
-        dosen=body.dosen,
+        dosen_id=body.dosen_id,
         hari=body.hari,
         jam_mulai=body.jam_mulai,
         jam_selesai=body.jam_selesai,
-        semester=body.semester,
-        enrolled_count=body.enrolled_count,
         force=body.force,
     )
 
@@ -93,24 +160,63 @@ def create_schedule(
 @router.get("/conflicts", response_model=ConflictListResponse, status_code=status.HTTP_200_OK)
 def get_conflicts(
     semester: str = Query(default="20251"),
-    include_general_overlap: bool = Query(default=False),
     service: SchedulingService = Depends(get_scheduling_service),
 ):
-    """Mendeteksi seluruh jadwal bentrok aktif menggunakan Interval Tree."""
-    conflicts = service.get_all_conflicts(
-        semester=semester, include_general_overlap=include_general_overlap
-    )
+    """Mendeteksi seluruh jadwal bentrok aktif menggunakan Grouping + Sort & Sweep."""
+    conflicts = service.get_all_conflicts(semester=semester)
     return {"total_conflicts": len(conflicts), "conflicts": conflicts}
 
 
 @router.post("/detect", response_model=ConflictListResponse, status_code=status.HTTP_200_OK)
 def detect_conflicts(body: ConflictDetectRequest):
-    """Mendeteksi bentrok jadwal secara stateless untuk daftar jadwal input."""
-    conflicts = detect_schedule_conflict(
-        [item.model_dump() for item in body.schedules],
-        include_general_overlap=body.include_general_overlap,
-    )
-    return {"total_conflicts": len(conflicts), "conflicts": conflicts}
+    """Mendeteksi bentrok ruangan & dosen secara stateless memakai Sort & Sweep."""
+    slots: list[JadwalSlot] = []
+    meta_by_id: dict[int, dict] = {}
+    for idx, item in enumerate(body.schedules, start=1):
+        if item.jam_mulai is None or item.jam_selesai is None:
+            continue
+        item_id = item.id if item.id is not None else idx
+        ruang = (item.ruangan_kode or item.ruangan or "").strip()
+        if item.dosen_id is not None:
+            d_id = item.dosen_id
+        elif item.dosen.strip():
+            d_id = abs(hash(item.dosen.strip().lower())) % 1_000_000_000 + 1
+        else:
+            d_id = -idx
+
+        slot = JadwalSlot(
+            id=item_id,
+            hari=int(item.hari),
+            jam_mulai=item.jam_mulai,
+            jam_selesai=item.jam_selesai,
+            ruangan_kode=ruang,
+            dosen_id=d_id,
+        )
+        slots.append(slot)
+        meta_by_id[item_id] = {
+            "id": item_id,
+            "kode_mk": item.kode_mk,
+            "nama_mk": item.nama_mk or item.kode_mk,
+            "hari": int(item.hari),
+            "hari_nama": HARI_MAP[int(item.hari)],
+            "jam": f"{item.jam_mulai.strftime('%H:%M')}-{item.jam_selesai.strftime('%H:%M')}",
+            "ruangan": ruang,
+            "dosen": item.dosen or str(d_id),
+        }
+
+    raw_conflicts = detect_conflicts_sweep(slots)
+    enriched = []
+    for c in raw_conflicts:
+        aff_dicts = [meta_by_id[jid] for jid in c.affected if jid in meta_by_id]
+        enriched.append(
+            {
+                "type": c.type,
+                "affected": list(c.affected),
+                "affected_schedules": aff_dicts,
+                "detail": f"{c.type}: jadwal {list(c.affected)}",
+            }
+        )
+    return {"total_conflicts": len(enriched), "conflicts": enriched}
 
 
 @router.get("/notifications", response_model=NotificationLogResponse, status_code=status.HTTP_200_OK)
@@ -125,7 +231,7 @@ def seed_demo_data(
     semester: str = Query(default="20251"),
     service: SchedulingService = Depends(get_scheduling_service),
 ):
-    """Mengisi data demo skenario bentrok (Kalkulus I Senin 08:00 A101) untuk Dashboard Admin."""
+    """Mengisi data demo skenario bentrok (4 model domain) untuk Dashboard Admin."""
     return service.seed_demo_data(semester=semester)
 
 
@@ -148,12 +254,12 @@ def update_schedule(
     """Memperbarui jadwal, memindahkan KRS terdampak ke REVISION, & mengirim notifikasi Observer."""
     return service.update_schedule(
         schedule_id=schedule_id,
+        kelas_id=body.kelas_id,
         ruangan_kode=body.ruangan_kode,
-        dosen=body.dosen,
+        dosen_id=body.dosen_id,
         hari=body.hari,
         jam_mulai=body.jam_mulai,
         jam_selesai=body.jam_selesai,
-        enrolled_count=body.enrolled_count,
         force=body.force,
     )
 

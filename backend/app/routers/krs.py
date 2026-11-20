@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db as get_orm_db
 from app.models.krs import KRS, MataKuliah
+from app.models.schedule import Kelas as KelasJadwal
 from app.schemas.krs import (
     AddCourseRequest,
     ApproveKRSRequest,
@@ -51,11 +52,12 @@ def add_course_to_krs(
     manager: KRSManager = Depends(get_krs_manager),
 ):
     """Menambahkan 1 mata kuliah ke kartu KRS mahasiswa (DRAFT/REVISION)."""
-    detail = manager.add_course(nim, body.kode_mk)
+    detail = manager.add_course(nim, body.kode_mk, kelas_id=body.kelas_id)
     return {
         "detail": f"Mata kuliah {detail.kode_mk} berhasil ditambahkan ke KRS",
         "krs_id": detail.krs_id,
         "kode_mk": detail.kode_mk,
+        "kelas_id": detail.kelas_id,
         "nama": detail.matakuliah.nama if detail.matakuliah else None,
     }
 
@@ -146,25 +148,34 @@ def recommend_krs(
             stmt = (
                 select(MataKuliah)
                 .where(MataKuliah.kode_mk.in_(requested_codes))
-                .options(selectinload(MataKuliah.prasyarat))
+                .options(
+                    selectinload(MataKuliah.prasyarat),
+                    selectinload(MataKuliah.kelas).selectinload(KelasJadwal.jadwals),
+                )
             )
             mk_map = {mk.kode_mk: mk for mk in db.scalars(stmt).all()}
             wajib_set = set(body.wajib_codes)
             for kode in requested_codes:
                 mk = mk_map.get(kode)
-                if mk is not None:
-                    offerings.append(
-                        CourseOffering(
-                            kode_mk=mk.kode_mk,
-                            nama=mk.nama,
-                            sks=mk.sks,
-                            hari=mk.hari,
-                            jam_mulai=mk.jam_mulai,
-                            jam_selesai=mk.jam_selesai,
-                            wajib=kode in wajib_set,
-                            prasyarat=[p.kode_mk for p in mk.prasyarat] or None,
+                if mk is None:
+                    continue
+                prereqs = [p.kode_mk for p in mk.prasyarat] or None
+                sem_classes = [k for k in mk.kelas if k.semester == semester] or list(mk.kelas)
+                for kls in sem_classes:
+                    for j in kls.jadwals:
+                        offerings.append(
+                            CourseOffering(
+                                kode_mk=mk.kode_mk,
+                                nama=mk.nama,
+                                sks=mk.sks,
+                                hari=j.hari,
+                                jam_mulai=j.jam_mulai,
+                                jam_selesai=j.jam_selesai,
+                                kelas=kls.nama_kelas,
+                                wajib=kode in wajib_set,
+                                prasyarat=prereqs,
+                            )
                         )
-                    )
 
     res = recommend_krs_csp(
         offerings=offerings,

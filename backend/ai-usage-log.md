@@ -327,6 +327,42 @@ Mengimplementasikan seluruh kebutuhan **Minggu 7–8: Modul Jadwal & Ruangan** p
 - **Kekurangan / Kompleksitas Tambahan**: Penambahan tabel `ruangan` dan `jadwal_kuliah` mengharuskan `alembic upgrade head` dijalankan pada database yang sudah ada sebelum memakai endpoint `/api/schedules`.
 
 
+## Log 13 — Penyelarasan Penuh Modul Jadwal & Ruang Minggu ke-7 (4 Model Domain, Grouping + Sort & Sweep, Locking Pesimis, & Pengujian Properti)
+
+### Tujuan
+Menyelaraskan implementasi modul Jadwal & Ruangan dengan seluruh spesifikasi kuliah OOP Minggu ke-7 sambil tetap mempertahankan fitur Minggu ke-8 (*Observer Pattern*, *Hybrid AI Rescheduler*, *Conflict Resolver UI*, dan invalidasi KRS ke `REVISION`), meliputi:
+1. Pemodelan 4 entitas domain (`Ruangan`, `Dosen` dengan NIDN unik, `Kelas` paralel dengan kuota/semester, `Jadwal` dengan indeks gabungan `(hari, ruangan_kode)` dan `(hari, dosen_id)`), penghapusan kolom jam dari `MataKuliah`, serta penambahan `KRSDetail.kelas_id` melalui migrasi Alembic `b2c3d4sch008`.
+2. Detektor bentrok dua versi: **Versi Naive** (`itertools.combinations`) sebagai *oracle* dan **Versi Grouping + Sort & Sweep** dengan `@dataclass(frozen=True) class Conflict` (`room_conflict` & `lecturer_conflict` saja), serta penundaan *Interval Tree* berdasar pengukuran skala kampus di ADR.
+3. Penyatuan alur `create_schedule` dan `update_schedule` di `SchedulingService._simpan()`, penguncian pesimis `with_for_update()` berurutan (`Ruangan -> Dosen`), query bentrok langsung di SQL, *capacity check* `max(kuota, terdaftar) <= kapasitas` dengan status `409 Conflict`, validasi Pydantic (`datetime.time`, `jam_mulai < jam_selesai` → `422`), dan polimorfisme `ScheduleError.body()`.
+4. Pengujian contoh berparameter (`@pytest.mark.parametrize`) atas 5 bug klasik AI, 2 properti `Hypothesis` (*schedule-free invariant* via slot 1 jam + `Counter`, dan *differential testing* `Counter(sweep) == Counter(naive)`), serta pembaruan ADR dan dokumentasi.
+
+### Perintah (Prompt) & Perbandingan Dua Model AI
+Prompt kunci yang diuji pada dua model (*Gemini Flash* via Google AI Studio vs pembanding model di OpenRouter) untuk fungsi deteksi bentrok:
+> "Buat fungsi `detect_schedule_conflict(schedules)` pada proyek Python + SQLAlchemy 2.0 menggunakan model `Ruangan`, `Dosen`, `Kelas`, dan `Jadwal`. Gunakan interval setengah terbuka `[jam_mulai, jam_selesai)` bertipe `datetime.time` (kuliah bersambung mis. 08:00–09:40 dan 09:40–11:20 tidak bentrok), kembalikan `@dataclass(frozen=True) class Conflict(type, affected)` hanya untuk tipe `room_conflict` dan `lecturer_conflict` (setiap pasangan dilaporkan sekali per tipe). Sediakan versi naif sebagai acuan serta versi teroptimasi Grouping + Sort & Sweep beserta bukti kesamaan keduanya di pytest."
+
+**Ringkasan Perbandingan Output Model:**
+- **Gemini Flash (Google AI Studio):** Menghasilkan struktur `@dataclass(frozen=True)` dan fungsi `detect_conflicts_sweep` yang ringkas, namun pada percobaan awal sempat menyisipkan pengecekan `<=` pada batas akhir aktif di sweep loop dan menduplikasi pasangan `(A, B)`/`(B, A)` pada versi naif sebelum diarahkan memakai `itertools.combinations`.
+- **Model Pembanding (OpenRouter):** Menghasilkan `itertools.combinations` yang tepat pada versi naif, namun sempat melaporkan tipe tambahan `time_overlap` dan memakai tipe `str` pada input jam sebelum diwajibkan memakai `datetime.time` dan `Literal["room_conflict", "lecturer_conflict"]`.
+
+### Revisi Manual atas 5 Bug Klasik AI
+1. **Operator batas interval (`<=` → `<` / `>`):** Memastikan kondisi irisan memakai `a.jam_mulai < b.jam_selesai and b.jam_mulai < a.jam_selesai` dan pembersihan daftar aktif memakai `a.jam_selesai > cur.jam_mulai` agar kuliah bersambung tepat pukul `09:40` tidak ditolak.
+2. **Tipe jam (`str` → `datetime.time`):** Memakai kolom SQLAlchemy `Time` dan skema Pydantic `datetime.time` (plus `@model_validator` yang melempar `422` bila `jam_mulai >= jam_selesai`) sehingga kasus `"9:00"` vs `"10:00"` tidak salah dibandingkan secara leksikografis.
+3. **Pemeriksaan hari:** Memastikan pengelompokan dan query SQL memfilter `hari` secara eksplisit agar Senin pagi dan Rabu pagi di ruangan sama tidak dilaporkan bentrok.
+4. **Duplikasi pasangan (`(A, B)` vs `(B, A)`):** Versi naif memakai `itertools.combinations(..., 2)` dan helper `pasangan(a, b)` mengurutkan ID sehingga setiap pasangan hanya muncul satu kali per tipe.
+5. **Penamaan tipe konflik & status HTTP:** Menghapus tipe `time_overlap` pada detektor penjadwalan (hanya `room_conflict` dan `lecturer_conflict`), mengubah `ScheduleCapacityError` menjadi `409 Conflict`, serta mengganti percabangan handler menjadi polimorfisme `exc.body()`.
+
+### OPAR (Observe – Plan – Act – Reflect)
+- **Observe:** Pada implementasi awal Minggu 7–8, entitas masih terbatas pada `Ruangan(kode_ruangan)` dan `JadwalKuliah` (tanpa tabel `Dosen` & `Kelas` paralel), `MataKuliah` masih menyimpan kolom `hari`/`jam_mulai`/`jam_selesai`, belum ada indeks gabungan `(hari, ruangan_kode)` & `(hari, dosen_id)`, pencarian bentrok menarik seluruh data ke memori Python tanpa *row locking* (`with_for_update()`)—sehingga bila dua admin menyimpan jadwal di ruang dan jam sama secara bersamaan, keduanya lolos pengecekan bentrok sebelum komit—serta error kapasitas masih `400` dan detektor langsung memakai *Interval Tree* tanpa *Naive oracle* & pengukuran benchmark.
+- **Plan:** Memecah domain ke 4 model (`Ruangan`, `Dosen`, `Kelas`, `Jadwal`) + migrasi Alembic `b2c3d4sch008`, menghapus *Interval Tree* dan beralih ke `Naive` + `Grouping + Sort & Sweep` (disertai benchmark 600 jadwal untuk ADR), menyatukan `create_schedule` & `update_schedule` ke `_simpan()` dengan penguncian pesimis `_kunci()` urutan tetap `Ruangan -> Dosen`, mengecek bentrok langsung di SQL memakai indeks gabungan sebelum `db.add()`, menetapkan kapasitas `409` & validasi Pydantic `422`, serta melengkapi tes `@pytest.mark.parametrize` + 2 properti `Hypothesis`.
+- **Act:** Merefaktor `models/schedule.py`, `models/krs.py`, `models/__init__.py` (beserta full path relasi di `user.py`, `course.py`, `enrollment.py`, `pendaftaran.py`), membuat migrasi `b2c3d4sch008`, mengganti `interval_tree.py` dengan `conflict_detector.py` versi `Naive` & `Sort & Sweep`, memperbarui `scheduling_service.py`, `schedule_recommender.py`, integrasi KRS (`krs_validator.py`, `krs_manager.py`, `krs_recommender.py`, `routers/krs.py`), `schemas/schedule.py`, `routers/schedule.py`, `main.py`, `conflict_resolver.html`, serta memperbarui `test_models_and_schemas.py`, `test_krs_api.py`, dan `test_schedule.py`. Menjalankan benchmark 600 jadwal (*tersebar*: `Naive 5,22 ms` vs `Sort & Sweep 0,60 ms`; *padat*: `Naive 7,80 ms` vs `Sort & Sweep 4,53 ms`), menguji migrasi Alembic `upgrade -> downgrade -> upgrade` terisolasi serta `alembic upgrade head` pada `backend/pmb.db`, dan menjalankan seluruh 5 file uji dengan hasil **104 passed** (`72 passed` pada `test_models_and_schemas.py` + `test_krs_property.py` dan `32 passed` pada `test_pmb.py` + `test_krs_api.py` + `test_schedule.py`).
+- **Reflect:** Pengujian konkurensi pada SQLite tidak membuktikan penguncian baris `SELECT ... FOR UPDATE` yang sesungguhnya karena dialek SQLite SQLAlchemy mengabaikan klausa `FOR UPDATE` saat kompilasi SQL; oleh karena itu, pembuktian perilaku penguncian pesimis dua transaksi paralel harus dilakukan di MySQL atau PostgreSQL, sedangkan di suite tes diverifikasi melalui spy pemanggilan `.with_for_update()` (kompilasi dialek MySQL) serta urutan eksekusi query (`Ruangan -> Dosen -> Cek Bentrok SQL`). Selain itu, keputusan menunda *Interval Tree* dicatat lengkap beserta angka benchmark di ADR-001, dan pengecekan kapasitas saat mahasiswa menambah kelas di `KRSManager` serta filter semester aktif dicatat sebagai limitasi di PR Template.
+
+### Evaluasi (Objektif)
+- **Kelebihan:** Skema 4 model domain kini mendukung kelas paralel dan multi-pertemuan per minggu, *Grouping + Sort & Sweep* berjalan sub-milidetik (`0,60 ms` untuk 600 jadwal) dan terbukti identik dengan versi *Naive* pada ratusan contoh acak `Hypothesis`, serta `SchedulingService._simpan()` aman dari *autoflush* prematur dan siap terhadap penguncian pesimis pada MySQL/PostgreSQL.
+- **Kekurangan / Kompleksitas Tambahan:** Pemisahan jadwal dari `MataKuliah` memerlukan migrasi skema `b2c3d4sch008` dan penyesuaian fixture uji KRS agar tiap mata kuliah di database memiliki baris `Kelas` dan `Jadwal`.
+
+
+
 
 
 

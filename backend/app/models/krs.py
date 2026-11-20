@@ -1,5 +1,6 @@
 import enum
 from datetime import datetime, time, timezone
+from typing import TYPE_CHECKING, Any
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -9,11 +10,13 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
-    Time,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from sqlalchemy.orm import Mapped, mapped_column, reconstructor, relationship, validates
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.schedule import Kelas
 
 
 class KRSError(ValueError):
@@ -66,15 +69,11 @@ class MataKuliah(Base):
     __tablename__ = "matakuliah"
     __table_args__ = (
         CheckConstraint("sks BETWEEN 1 AND 4", name="ck_matakuliah_sks"),
-        CheckConstraint("jam_mulai < jam_selesai", name="ck_matakuliah_jam"),
     )
 
     kode_mk: Mapped[str] = mapped_column(String(10), primary_key=True)
     nama: Mapped[str] = mapped_column(String(100), nullable=False)
     sks: Mapped[int] = mapped_column(Integer, nullable=False)
-    hari: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 = Senin ... 6 = Sabtu
-    jam_mulai: Mapped[time] = mapped_column(Time, nullable=False)
-    jam_selesai: Mapped[time] = mapped_column(Time, nullable=False)
 
     prasyarat: Mapped[list["MataKuliah"]] = relationship(
         "MataKuliah",
@@ -82,6 +81,47 @@ class MataKuliah(Base):
         primaryjoin=kode_mk == prerequisite.c.kode_mk,
         secondaryjoin=kode_mk == prerequisite.c.kode_prasyarat,
     )
+    kelas: Mapped[list["Kelas"]] = relationship(
+        "app.models.schedule.Kelas", back_populates="matakuliah"
+    )
+
+    def __init__(self, **kwargs: Any) -> None:
+        hari = kwargs.pop("hari", None)
+        jam_mulai = kwargs.pop("jam_mulai", None)
+        jam_selesai = kwargs.pop("jam_selesai", None)
+        super().__init__(**kwargs)
+        self._transient_slots: list[tuple[int, time, time]] = []
+        if hari is not None and jam_mulai is not None and jam_selesai is not None:
+            self._transient_slots.append((int(hari), jam_mulai, jam_selesai))
+
+    @reconstructor
+    def _init_on_load(self) -> None:
+        self._transient_slots = []
+
+    def get_jadwal_slots(self) -> list[tuple[int, time, time]]:
+        """Mengambil daftar slot (hari, jam_mulai, jam_selesai) dari kelas->jadwals atau fallback transient."""
+        slots: list[tuple[int, time, time]] = []
+        for kls in (self.kelas or []):
+            for j in (kls.jadwals or []):
+                slots.append((j.hari, j.jam_mulai, j.jam_selesai))
+        if slots:
+            return slots
+        return list(getattr(self, "_transient_slots", []))
+
+    @property
+    def hari(self) -> int | None:
+        slots = self.get_jadwal_slots()
+        return slots[0][0] if slots else None
+
+    @property
+    def jam_mulai(self) -> time | None:
+        slots = self.get_jadwal_slots()
+        return slots[0][1] if slots else None
+
+    @property
+    def jam_selesai(self) -> time | None:
+        slots = self.get_jadwal_slots()
+        return slots[0][2] if slots else None
 
 
 class KRSStatus(str, enum.Enum):
@@ -254,10 +294,14 @@ class KRSDetail(Base):
     kode_mk: Mapped[str] = mapped_column(
         String(10), ForeignKey("matakuliah.kode_mk"), nullable=False
     )
+    kelas_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("kelas.id"), nullable=True, index=True
+    )
     nilai: Mapped[str | None] = mapped_column(String(2), nullable=True)
 
     krs: Mapped["KRS"] = relationship("KRS", back_populates="details")
     matakuliah: Mapped["MataKuliah"] = relationship("MataKuliah")
+    kelas: Mapped["Kelas | None"] = relationship("app.models.schedule.Kelas")
 
 
 class KRSLog(Base):

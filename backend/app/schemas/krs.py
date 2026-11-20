@@ -37,6 +37,7 @@ class PendaftaranKRSResponse(BaseModel):
 
 class AddCourseRequest(BaseModel):
     kode_mk: str = Field(..., min_length=1, description="Kode mata kuliah yang akan ditambahkan")
+    kelas_id: int | None = Field(default=None, description="ID kelas paralel opsional")
 
 
 class ApproveKRSRequest(BaseModel):

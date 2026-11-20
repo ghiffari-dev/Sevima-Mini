@@ -4,8 +4,8 @@ sequenceDiagram
     actor Admin as Admin Akademik
     participant UI as ConflictResolverUI
     participant Service as SchedulingService
-    participant Detector as "IntervalTree / ConflictDetector"
-    participant DB as "Database (Jadwal & KRS)"
+    participant Detector as "SortAndSweep / ConflictDetector"
+    participant DB as "Database (Ruangan, Dosen, Kelas, Jadwal, KRS)"
     participant Subject as "NotificationManager (ScheduleSubject)"
     participant StudentObs as StudentObserver
     participant LecturerObs as LecturerObserver
@@ -15,9 +15,9 @@ sequenceDiagram
     Admin->>UI: Buka dashboard /dashboard/conflicts
     UI->>Service: GET /api/schedules/conflicts
     activate Service
-    Service->>Detector: detect_schedule_conflict(schedules)
+    Service->>Detector: detect_conflicts_sweep(jadwals)
     activate Detector
-    Detector-->>Service: Daftar bentrok (room_conflict, lecturer_conflict, time_overlap)
+    Detector-->>Service: Daftar bentrok (room_conflict, lecturer_conflict)
     deactivate Detector
     Service-->>UI: Tampilkan daftar jadwal bentrok
     deactivate Service
@@ -31,12 +31,13 @@ sequenceDiagram
     Admin->>UI: Klik "Terapkan Jadwal" pada salah satu saran
     UI->>Service: PUT /api/schedules/{id}
     activate Service
-    Service->>Detector: Cek kapasitas ruangan & bentrok 3D
+    Service->>DB: Kunci baris Ruangan -> Dosen (FOR UPDATE)
+    Service->>Detector: Cek bentrok SQL & kapasitas (max(kuota, terdaftar) <= kapasitas)
     activate Detector
     Detector-->>Service: Valid (kapasitas cukup & bebas bentrok)
     deactivate Detector
 
-    Service->>DB: Update jadwal_kuliah & sinkronkan matakuliah (ACID)
+    Service->>DB: Update tabel jadwal (ACID)
     activate DB
     Service->>DB: Pindahkan KRS terdampak ke REVISION + tulis KRSLog & Notifikasi
     DB-->>Service: Commit transaksi berhasil

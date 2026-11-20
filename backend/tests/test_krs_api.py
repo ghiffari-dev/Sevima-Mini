@@ -15,6 +15,7 @@ from app.models.calon_mahasiswa import CalonMahasiswa
 from app.models.jalur_masuk import JalurMasuk
 from app.models.krs import KRS, KRSStatus, MataKuliah
 from app.models.program_studi import ProgramStudi
+from app.models.schedule import Dosen as DosenJadwal, Jadwal, Kelas as KelasJadwal, Ruangan
 
 
 @pytest.fixture()
@@ -44,54 +45,54 @@ def api_client():
             status="approved",
             nim="2025001-0001",
         )
-        kalkulus_1 = MataKuliah(
-            kode_mk="MA101",
-            nama="Kalkulus I",
-            sks=3,
-            hari=1,
-            jam_mulai=time(10, 0),
-            jam_selesai=time(12, 0),
-        )
+        kalkulus_1 = MataKuliah(kode_mk="MA101", nama="Kalkulus I", sks=3)
         kalkulus_2 = MataKuliah(
             kode_mk="MA201",
             nama="Kalkulus II",
             sks=3,
-            hari=3,
-            jam_mulai=time(10, 0),
-            jam_selesai=time(12, 0),
             prasyarat=[kalkulus_1],
         )
-        basis_data = MataKuliah(
-            kode_mk="IF201",
-            nama="Basis Data",
-            sks=3,
-            hari=1,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
-        )
+        basis_data = MataKuliah(kode_mk="IF201", nama="Basis Data", sks=3)
         pbo = MataKuliah(
-            kode_mk="IF202",
-            nama="Pemrograman Berorientasi Objek",
-            sks=3,
-            hari=1,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
+            kode_mk="IF202", nama="Pemrograman Berorientasi Objek", sks=3
         )
-        jarkom = MataKuliah(
-            kode_mk="IF203",
-            nama="Jaringan Komputer",
-            sks=3,
-            hari=2,
-            jam_mulai=time(13, 0),
-            jam_selesai=time(15, 0),
-        )
+        jarkom = MataKuliah(kode_mk="IF203", nama="Jaringan Komputer", sks=3)
+
+        r101 = Ruangan(kode="R101", nama="Ruang R101", kapasitas=40)
+        r102 = Ruangan(kode="R102", nama="Ruang R102", kapasitas=40)
+        dosen1 = DosenJadwal(nidn="00110011", nama="Dr. Pengampu")
+        db.add_all([mhs, kalkulus_1, kalkulus_2, basis_data, pbo, jarkom, r101, r102, dosen1])
+        db.flush()
+
+        kelas_specs = [
+            ("MA101", 1, time(10, 0), time(12, 0), "R101"),
+            ("MA201", 3, time(10, 0), time(12, 0), "R101"),
+            ("IF201", 1, time(8, 0), time(10, 0), "R101"),
+            ("IF202", 1, time(8, 0), time(10, 0), "R102"),
+            ("IF203", 2, time(13, 0), time(15, 0), "R101"),
+        ]
+        for kode_mk, hari, mulai, selesai, ruang in kelas_specs:
+            kls = KelasJadwal(kode_mk=kode_mk, nama_kelas="A", kuota=40, semester="20251")
+            db.add(kls)
+            db.flush()
+            db.add(
+                Jadwal(
+                    kelas_id=kls.id,
+                    ruangan_kode=ruang,
+                    dosen_id=dosen1.id,
+                    hari=hari,
+                    jam_mulai=mulai,
+                    jam_selesai=selesai,
+                )
+            )
+
         krs_draft = KRS(
             nim="2025001-0001",
             semester="20251",
             status=KRSStatus.DRAFT,
             dosen_pa_id=10,
         )
-        db.add_all([mhs, kalkulus_1, kalkulus_2, basis_data, pbo, jarkom, krs_draft])
+        db.add(krs_draft)
         db.commit()
 
     def override_get_orm_db():

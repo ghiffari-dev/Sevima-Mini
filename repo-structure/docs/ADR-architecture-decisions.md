@@ -4,7 +4,7 @@
 Disetujui
 
 ## 2. Konteks
-Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan implementasi backend RESTful API (FastAPI & SQLAlchemy) yang mencakup manajemen pengguna, katalog mata kuliah, penawaran kelas per semester, KRS, modul penjadwalan kuliah & ruangan (deteksi bentrok 3 dimensi berbasis *Interval Tree*, notifikasi berbasis *Observer Pattern*, saran penjadwalan ulang *AI-Powered* beserta *Conflict Resolver UI*, serta sinkronisasi invalidasi KRS), pencatatan nilai, serta pembayaran. Desain dikembangkan secara iteratif melalui analisis arsitektur berorientasi objek (OOP) dan prinsip SOLID.
+Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan implementasi backend RESTful API (FastAPI & SQLAlchemy) yang mencakup manajemen pengguna, katalog mata kuliah, penawaran kelas per semester, KRS, modul penjadwalan kuliah & ruangan (4 entitas domain `Ruangan`, `Dosen`, `Kelas`, `Jadwal`, deteksi bentrok 3 dimensi dengan *Grouping + Sort & Sweep* dan *Naive* sebagai acuan, penguncian pesimis `FOR UPDATE`, validasi kapasitas `409 Conflict`, notifikasi berbasis *Observer Pattern*, saran penjadwalan ulang *AI-Powered* beserta *Conflict Resolver UI*, serta sinkronisasi invalidasi KRS), pencatatan nilai, serta pembayaran. Desain dikembangkan secara iteratif melalui analisis arsitektur berorientasi objek (OOP) dan prinsip SOLID.
 
 ## 3. Keputusan Arsitektur
 
@@ -79,16 +79,32 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
   1. *Pessimistic Lock*: Seluruh operasi pada `KRSManager` (`add_course`, `remove_course`, `submit_krs`, `approve_krs`, `revise_krs`) mengambil baris kartu lewat `_krs_terkunci()` yang menggunakan `.with_for_update()` dan memeriksa status setelah kunci diperoleh.
   2. *Optimistic Lock*: Model `KRS` dilengkapi kolom `version` (`__mapper_args__ = {"version_id_col": version}`) dan `diubah_pada`. Setiap penambahan/penghapusan `krs_detail` menyentuh `krs.diubah_pada` agar `version` pada baris `krs` selalu naik, sehingga persetujuan dari layar Dosen PA yang "basi" (versi lama) otomatis ditolak dengan `409 Conflict` (*"KRS sudah berubah, muat ulang"*).
 
-### 3.14 Modul Jadwal & Ruangan: Interval Tree & Deteksi Bentrok 3 Dimensi
-- **Pemodelan Terhubung (`ruangan` + `jadwal_kuliah`)**: Menambahkan model `Ruangan` dan `JadwalKuliah` pada `backend/app/models/schedule.py` yang berelasi langsung ke `matakuliah.kode_mk` (tanpa membongkar model legacy `Schedule` di `course.py`), sehingga setiap perubahan jadwal langsung mengetahui daftar KRS mahasiswa yang mengambil mata kuliah terkait serta memvalidasi batasan kapasitas ruangan (`enrolled_count <= kapasitas`).
-- **Interval Tree untuk Irisan Waktu**: Pengecekan tumpang tindih jam menggunakan struktur data *Augmented Binary Search Tree* (`IntervalTree` di `backend/app/services/interval_tree.py` dengan atribut `max_end` dan interval half-open `[start, end)`) per hari sehingga jadwal bersebelahan (`08:00-10:00` vs `10:00-12:00`) tidak dianggap bentrok, serta mengklasifikasikan konflik di `detect_schedule_conflict()` menjadi `room_conflict` (ruangan sama), `lecturer_conflict` (dosen sama), dan `time_overlap` (mahasiswa/MK sama atau irisan umum).
+### 3.14 Modul Jadwal & Ruangan (Minggu 7): Empat Model Domain, CSP, Sort & Sweep vs Interval Tree, Locking Pesimis, & Polimorfisme Error
+- **Pemodelan 4 Entitas Domain & Migrasi (`b2c3d4sch008`)**:
+  - Domain penjadwalan dipecah menjadi empat tabel eksplisit di `backend/app/models/schedule.py`: `Ruangan` (`kode` sebagai PK alami + `kapasitas`), `Dosen` (`nidn` unik + `nama`), `Kelas` (`kode_mk` FK `matakuliah.kode_mk`, `nama_kelas` paralel mis. `A`/`B`, `kuota`, `semester`), dan `Jadwal` (`kelas_id`, `ruangan_kode`, `dosen_id`, `hari` 1..6, `jam_mulai` & `jam_selesai` bertipe `Time`).
+  - Pemisahan `Jadwal` dari `Kelas` memungkinkan satu kelas memiliki lebih dari satu pertemuan mingguan (misalnya kuliah teori hari Senin di ruang kelas dan praktikum hari Kamis di laboratorium).
+  - Lewat migrasi Alembic `b2c3d4sch008`, kolom `hari`, `jam_mulai`, `jam_selesai` dihapus dari tabel `matakuliah` (karena jam bukan lagi milik mata kuliah tunggal) dan kolom `kelas_id` ditambahkan ke `krs_detail`.
+  - **Indeks Gabungan Berbasis Query**: Tabel `jadwal` mendefinisikan `Index("ix_jadwal_hari_ruangan", "hari", "ruangan_kode")` dan `Index("ix_jadwal_hari_dosen", "hari", "dosen_id")` karena query tersering adalah memeriksa jadwal di ruangan atau dosen tertentu pada hari tertentu, disertai `CheckConstraint` (`hari BETWEEN 1 AND 6` dan `jam_mulai < jam_selesai`).
+- **Penjadwalan sebagai *Constraint Satisfaction Problem* (CSP)**:
+  - *Variabel*: setiap pertemuan kelas yang perlu dijadwalkan; *Domain*: kombinasi hari, slot jam, dan ruangan; *Hard Constraints*: bebas bentrok ruangan, bebas bentrok dosen, dan kebutuhan kursi $\le$ kapasitas ruangan; *Soft Constraints*: preferensi waktu pagi/siang dan minimal gangguan jadwal mahasiswa (ditangani pada saran penjadwalan ulang).
+- **Aturan Interval Setengah Terbuka & Dua Tipe Konflik**:
+  - Setiap jadwal diperlakukan sebagai interval setengah terbuka $[\text{jam\_mulai}, \text{jam\_selesai})$ ($\text{mulai}_1 < \text{selesai}_2 \land \text{mulai}_2 < \text{selesai}_1$) sehingga kuliah bersambung (misalnya `08:00–09:40` dan `09:40–11:20`) tidak bentrok.
+  - Detektor hanya mengembalikan 2 tipe konflik (`ConflictType = Literal["room_conflict", "lecturer_conflict"]`) dalam `@dataclass(frozen=True) class Conflict` (*hashable* untuk `set`/`Counter`, dengan ID pasangan diurutkan lewat `pasangan(a, b)`). Irisan waktu saja tanpa kesamaan ruang atau dosen bukan konflik.
+- **Keputusan Menunda *Interval Tree* & Memilih *Grouping + Sort & Sweep* (Berbasis Pengukuran)**:
+  - `backend/app/services/conflict_detector.py` mempertahankan **Versi Naive** (`detect_conflicts_naive`, $O(n^2)$ memakai `itertools.combinations`) sebagai *oracle* acuan kebenaran dan menggunakan **Versi Grouping + Sort & Sweep** (`detect_conflicts_sweep`, $O(n \log n + k)$ dengan kamus `ATURAN_KELOMPOK`) untuk produksi.
+  - Berdasarkan hasil benchmark nyata pada **600 jadwal** (179.700 pasangan):
+    - **Dataset kampus tersebar** (600 jadwal, 18 ruang × 5 hari $\approx 6,7$ jadwal/ruang/hari, 439 konflik): `Naive = 5,22 ms` vs `Sort & Sweep = 0,60 ms` (~8,7× lebih cepat).
+    - **Dataset padat** (600 jadwal, 7.410 konflik): `Naive = 7,80 ms` vs `Sort & Sweep = 4,53 ms`.
+  - Karena rata-rata beban per ruang per hari di kampus hanya 6–8 jadwal, waktu eksekusi *Grouping + Sort & Sweep* sudah sub-milidetik (`0,60 ms`). Penambahan struktur data *Interval Tree* sengaja **ditunda** agar tidak menambah kompleksitas kode dan dependensi tanpa keuntungan terukur; *Interval Tree* baru layak bila sistem berkembang ke peminjaman ruang lintas tahun atau *CSP solver* yang menguji ribuan kandidat jadwal per detik.
+- **Penguncian Pesimis Anti-*Deadlock*, Capacity Check `409`, Validasi `422`, & Polimorfisme Error**:
+  - `SchedulingService._simpan()` menyatukan alur `create_schedule` dan `update_schedule` dalam satu transaksi: validasi `Kelas` & jam $\rightarrow$ kunci baris `Ruangan` terlebih dahulu lalu `Dosen` via `.with_for_update()` (urutan tetap mencegah *deadlock*; dipilih karena MySQL tidak memiliki *exclusion constraint* seperti PostgreSQL) $\rightarrow$ query bentrok langsung di SQL memakai indeks gabungan (mengecualikan `id` sendiri saat `update`) $\rightarrow$ `cek_kapasitas()` dengan `max(kelas.kuota, jumlah_terdaftar_krs) <= ruangan.kapasitas` (`409 Conflict`, sehingga kelas berkuota 50 tetap ditolak di ruang berkapasitas 40 meski mahasiswa KRS masih 0) $\rightarrow$ `db.add(jadwal)` diletakkan paling akhir sebelum `commit()` agar *autoflush* SQLAlchemy tidak memicu query bentrok terhadap jadwal yang belum tervalidasi.
+  - Validasi format jam (`datetime.time`) dan `jam_mulai < jam_selesai` ditegakkan di pintu API melalui Pydantic (`422 Unprocessable Entity`), sementara `ScheduleError.body()` dan `ScheduleConflictError.body()` ditangani secara polimorfik oleh `@app.exception_handler(ScheduleError)` di `main.py` (`404` tidak ditemukan, `409` bentrok/kapasitas).
 
-| Aspek Perbandingan | Interval Tree (`[start, end)`) | Brute-Force Pairwise $O(n^2)$ |
-| :--- | :--- | :--- |
-| **Kompleksitas Query Irisan** | $O(\log n + k)$ per jadwal (rata-rata), $O(n \log n + m)$ seluruh pasangan | $O(n^2)$ membandingkan seluruh pasangan meski rentang jam berjauhan |
-| **Interval Bersebelahan** | Eksplisit non-bentrok (`entry.start < end and start < entry.end`) | Harus menjaga syarat ketat yang sama secara manual |
-| **Skala Data Jadwal** | Tetap responsif saat jumlah kelas per hari bertambah besar | Mulai melambat kuadratik pada katalog semester besar |
-| **Verifikasi Ekuivalensi** | Terbukti identik dengan *brute-force* pada **250 contoh acak Hypothesis** (`test_schedule.py`) | Dijadikan *oracle* pembanding di property-based testing |
+| Aspek Perbandingan | Grouping + Sort & Sweep ($O(n \log n + k)$) | Naive Pairwise ($O(n^2)$) | Interval Tree *(Ditunda)* |
+| :--- | :--- | :--- | :--- |
+| **Performa 600 Jadwal Kampus** | **0,60 ms** (dataset tersebar), **4,53 ms** (padat) | 5,22 ms (tersebar), 7,80 ms (padat) | Overhead tree untuk 6–8 jadwal/ruang/hari tidak signifikan |
+| **Kompleksitas & Dependensi** | Ringkas (~25 baris, +0 dependensi) | Paling sederhana (**dipertahankan sebagai *oracle* tes**) | Struktur BST tambahan (`max_end`) / paket eksternal |
+| **Kesesuaian Skala** | **Optimal** untuk penjadwalan semester (~600 jadwal) | Memadai untuk acuan pengujian & verifikasi properti | Layak untuk *solver* ribuan kandidat/detik atau histori multi-tahun |
 
 ### 3.15 Observer Pattern (`ScheduleSubject` & `NotificationManager`)
 - **Publisher–Subscriber Terpisah**: `ScheduleSubject` dan turunannya `NotificationManager` (`backend/app/services/schedule_observer.py`) mengelola daftar subscriber secara dinamis lewat `attach()`, `detach()`, dan `notify(event_type, schedule_data)` untuk empat tipe event (`SCHEDULE_CREATED`, `SCHEDULE_CHANGED`, `SCHEDULE_DELETED`, `CONFLICT_DETECTED`). Alur interaksi lengkap didokumentasikan pada `repo-structure/diagrams/sequence-schedule-observer.mmd`.
@@ -137,9 +153,9 @@ Sistem informasi akademik mini (SEVIMA-Mini) membutuhkan desain kelas UML dan im
 9. **Invalidasi KRS ke Status `REVISION` vs Status Terpisah `INVALIDATED`**
    - *Kelebihan*: Mahasiswa dapat langsung memperbarui dan mengajukan ulang KRS melalui alur `KRSManager` (`REVISION -> SUBMITTED`) tanpa memperbesar tabel transisi state machine maupun merusak pengujian 28 transisi ilegal.
    - *Kekurangan*: Pembedaan antara revisi oleh Dosen PA dan revisi akibat perubahan jadwal bergantung pada `catatan_revisi` serta riwayat `KRSLog` (`invalidate_schedule_change`).
-10. **Interval Tree vs Brute-Force Pairwise $O(n^2)$ untuk Deteksi Bentrok Jadwal**
-    - *Kelebihan*: Pruning `max_end` pada *Interval Tree* membuat pencarian irisan jam per hari lebih efisien untuk katalog jadwal besar dengan semantik half-open `[start, end)` yang eksplisit.
-    - *Kekurangan*: Membutuhkan implementasi struktur tree tersendiri (`IntervalTree` & `IntervalNode`) dibanding dua loop bersarang sederhana.
+10. **Grouping + Sort & Sweep vs Naive vs Interval Tree untuk Deteksi Bentrok Jadwal**
+    - *Kelebihan*: Pengelompokan `(hari, ruangan_kode)` & `(hari, dosen_id)` diikuti *Sort & Sweep* menyapu ~600 jadwal kampus hanya dalam **0,60 ms** (vs **5,22 ms** pada *Naive*), tanpa dependensi eksternal maupun kerumitan penyeimbangan *tree*, sementara versi *Naive* tetap dipertahankan sebagai *oracle* pada *differential testing* Hypothesis (`Counter(sweep) == Counter(naive)`).
+    - *Kekurangan*: Jika kelak sistem menangani pencarian interval dinamis berskala jutaan data atau *CSP solver* ribuan kandidat per detik, struktur indeks berbasis *Interval Tree* tetap perlu dipertimbangkan ulang.
 11. **Embedded Admin Dashboard HTML/JS vs SPA Frontend Terpisah (React/Vite)**
     - *Kelebihan*: Nol dependensi frontend tambahan, langsung aktif saat `uvicorn` dijalankan di `/dashboard/conflicts`, dan mudah diuji end-to-end langsung lewat FastAPI `TestClient`.
     - *Kekurangan*: Tidak memiliki manajemen state atau komponen modular skala besar seperti React/Vue apabila UI berkembang menjadi portal multi-halaman kompleks.

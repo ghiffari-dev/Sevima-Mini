@@ -75,11 +75,10 @@ def _to_matakuliah(offering: CourseOffering, db_mk_map: dict[str, MataKuliah]) -
     """Mengambil instance MataKuliah dari DB jika ada, atau membuat objek transient di memori."""
     if offering.kode_mk in db_mk_map:
         db_mk = db_mk_map[offering.kode_mk]
-        # Jika penawaran kelas paralel punya jadwal berbeda di memory, salin prasyarat DB
+        slots = db_mk.get_jadwal_slots()
         if (
-            db_mk.hari == offering.hari
-            and db_mk.jam_mulai == offering.jam_mulai
-            and db_mk.jam_selesai == offering.jam_selesai
+            slots
+            and (offering.hari, offering.jam_mulai, offering.jam_selesai) in slots
             and db_mk.sks == offering.sks
         ):
             return db_mk

@@ -336,8 +336,8 @@
       <div class="card" style="margin-bottom:0;">
         <div class="card-header">
           <div>
-            <h2 class="card-title">Daftar Bentrok Jadwal (Interval Tree)</h2>
-            <p class="card-subtitle">Deteksi otomatis bentrok ruangan, dosen, dan irisan waktu</p>
+            <h2 class="card-title">Daftar Bentrok Jadwal (Grouping + Sort &amp; Sweep)</h2>
+            <p class="card-subtitle">Deteksi otomatis bentrok ruangan dan bentrok dosen pada interval setengah terbuka</p>
           </div>
         </div>
         <div id="conflicts-container"></div>
@@ -392,8 +392,8 @@
         </div>
         <form onsubmit="submitCreateSchedule(event)" class="form-grid">
           <div class="field">
-            <label for="f-mk">Mata Kuliah</label>
-            <select id="f-mk" required></select>
+            <label for="f-kelas">Kelas Kuliah</label>
+            <select id="f-kelas" required></select>
           </div>
           <div class="field">
             <label for="f-room">Ruangan</label>
@@ -401,7 +401,7 @@
           </div>
           <div class="field">
             <label for="f-dosen">Dosen Pengampu</label>
-            <input id="f-dosen" type="text" placeholder="Dr. Budi Santoso" required />
+            <select id="f-dosen" required></select>
           </div>
           <div class="field">
             <label for="f-hari">Hari</label>
@@ -421,10 +421,6 @@
           <div class="field">
             <label for="f-selesai">Jam Selesai</label>
             <input id="f-selesai" type="time" value="10:00" required />
-          </div>
-          <div class="field">
-            <label for="f-enrolled">Jml Mahasiswa</label>
-            <input id="f-enrolled" type="number" min="0" value="30" required />
           </div>
           <div class="field">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -516,11 +512,11 @@
               <span style="font-size:0.84rem;color:#334155;font-weight:600;">${escapeHtml(c.detail)}</span>
             </div>
             <div class="conflict-pair">
-              ${[s1, s2].map((s) => `
+              ${[s1, s2].filter(Boolean).map((s) => `
                 <div class="mini-box">
-                  <div><strong>${escapeHtml(s.nama_mk)}</strong> (${escapeHtml(s.kode_mk)})</div>
-                  <div>${escapeHtml(s.hari_nama)} ${escapeHtml(s.jam)} &bull; Ruang <strong>${escapeHtml(s.ruangan)}</strong></div>
-                  <div>Dosen: ${escapeHtml(s.dosen)} &bull; ${escapeHtml(s.enrolled_count)} mhs</div>
+                  <div><strong>${escapeHtml(s.nama_mk)}</strong> (${escapeHtml(s.kode_mk)} - Kelas ${escapeHtml(s.nama_kelas || "A")})</div>
+                  <div>${escapeHtml(s.hari_nama)} ${escapeHtml(s.jam)} &bull; Ruang <strong>${escapeHtml(s.ruangan_kode || s.ruangan)}</strong></div>
+                  <div>Dosen: ${escapeHtml(s.dosen)} &bull; Kuota ${escapeHtml(s.enrolled_count)}/${escapeHtml(s.kapasitas)}</div>
                   <div style="margin-top:8px;">
                     <button class="btn btn-primary btn-sm" onclick="suggestAlternatives(${Number(s.id)})">
                       Saran Alternatif AI
@@ -544,11 +540,11 @@
       tbody.innerHTML = schedules.map((s) => `
         <tr>
           <td>#${Number(s.id)}</td>
-          <td><strong>${escapeHtml(s.nama_mk)}</strong><br/><span style="color:#64748b;font-size:0.8rem;">${escapeHtml(s.kode_mk)}</span></td>
+          <td><strong>${escapeHtml(s.nama_mk)}</strong><br/><span style="color:#64748b;font-size:0.8rem;">${escapeHtml(s.kode_mk)} &bull; Kelas ${escapeHtml(s.nama_kelas || "A")}</span></td>
           <td>${escapeHtml(s.hari_nama)}<br/><span style="color:#64748b;font-size:0.8rem;">${escapeHtml(s.jam)}</span></td>
           <td><strong>${escapeHtml(s.ruangan_kode)}</strong><br/><span style="color:#64748b;font-size:0.8rem;">${escapeHtml(s.ruangan_nama)}</span></td>
           <td>${escapeHtml(s.dosen)}</td>
-          <td>${Number(s.enrolled_count)} / ${Number(s.kapasitas)} mhs</td>
+          <td>${Number(s.enrolled_count)} / ${Number(s.kapasitas)} kursi</td>
           <td>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <button class="btn btn-secondary btn-sm" onclick="suggestAlternatives(${Number(s.id)})">Saran AI</button>
@@ -656,18 +652,17 @@
       event.preventDefault();
       try {
         const payload = {
-          kode_mk: document.getElementById("f-mk").value,
+          kelas_id: Number(document.getElementById("f-kelas").value),
           ruangan_kode: document.getElementById("f-room").value,
-          dosen: document.getElementById("f-dosen").value,
+          dosen_id: Number(document.getElementById("f-dosen").value),
           hari: Number(document.getElementById("f-hari").value),
           jam_mulai: document.getElementById("f-mulai").value,
           jam_selesai: document.getElementById("f-selesai").value,
-          enrolled_count: Number(document.getElementById("f-enrolled").value),
           force: document.getElementById("f-force").checked,
         };
         const res = await apiFetch(API, { method: "POST", body: JSON.stringify(payload) });
         showToast(
-          `Jadwal ${escapeHtml(res.schedule.nama_mk)} (${escapeHtml(res.schedule.hari_nama)} ${escapeHtml(res.schedule.jam)}) berhasil dibuat.`,
+          `Jadwal ${escapeHtml(res.schedule.nama_mk)} (${escapeHtml(res.schedule.nama_kelas)}) (${escapeHtml(res.schedule.hari_nama)} ${escapeHtml(res.schedule.jam)}) berhasil dibuat.`,
           "success"
         );
         await loadAll();
@@ -687,9 +682,10 @@
     }
 
     async function loadAll() {
-      const [rooms, courses, schedules, conflictsRes, logsRes] = await Promise.all([
+      const [rooms, classes, lecturers, schedules, conflictsRes, logsRes] = await Promise.all([
         apiFetch(`${API}/rooms`),
-        apiFetch(`${API}/courses`),
+        apiFetch(`${API}/classes`),
+        apiFetch(`${API}/lecturers`),
         apiFetch(`${API}`),
         apiFetch(`${API}/conflicts`),
         apiFetch(`${API}/notifications`),
@@ -697,10 +693,13 @@
 
       document.getElementById("kpi-rooms").textContent = rooms.length;
       document.getElementById("f-room").innerHTML = rooms.map(
-        (r) => `<option value="${escapeHtml(r.kode_ruangan)}">${escapeHtml(r.kode_ruangan)} (kap ${Number(r.kapasitas)})</option>`
+        (r) => `<option value="${escapeHtml(r.kode)}">${escapeHtml(r.kode)} (kap ${Number(r.kapasitas)})</option>`
       ).join("");
-      document.getElementById("f-mk").innerHTML = courses.map(
-        (c) => `<option value="${escapeHtml(c.kode_mk)}">${escapeHtml(c.kode_mk)} — ${escapeHtml(c.nama)}</option>`
+      document.getElementById("f-kelas").innerHTML = classes.map(
+        (k) => `<option value="${Number(k.id)}">${escapeHtml(k.kode_mk)} - Kelas ${escapeHtml(k.nama_kelas)} (kuota ${Number(k.kuota)})</option>`
+      ).join("");
+      document.getElementById("f-dosen").innerHTML = lecturers.map(
+        (d) => `<option value="${Number(d.id)}">${escapeHtml(d.nama)} (${escapeHtml(d.nidn)})</option>`
       ).join("");
 
       renderSchedules(schedules);

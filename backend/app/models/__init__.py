@@ -26,8 +26,11 @@ from app.models.enrollment import Enrollment
 from app.models.grade import Grade
 from app.models.payment import Payment, PembayaranPMB, PembayaranKRS
 from app.models.schedule import (
+    Dosen as DosenJadwal,
     HARI_MAP,
+    Jadwal,
     JadwalKuliah,
+    Kelas as KelasJadwal,
     Ruangan,
     ScheduleCapacityError,
     ScheduleConflictError,

@@ -14,13 +14,14 @@
 
 ## Risiko & Limitasi
 - **Otorisasi Endpoint KRS**: Parameter `dosen_pa_id` pada endpoint `/api/krs/{nim}/approve` dan `/api/krs/{nim}/revise` saat ini masih dikirim melalui *request body* karena modul autentikasi/JWT belum dihubungkan langsung ke router KRS (idealnya diambil dari identitas login terverifikasi agar tidak dapat dipalsukan).
-- **Limitasi Database SQLite**: Uji *pessimistic row lock* (`SELECT ... FOR UPDATE` / `.with_for_update()`) di SQLite tidak membuktikan *row-level locking* konkuren yang sesungguhnya seperti pada PostgreSQL/MySQL (diatasi sementara dengan *Optimistic Lock* kolom `version` & `version_id_col` serta verifikasi lanjutan di PostgreSQL/MySQL).
+- **Limitasi Database SQLite**: Uji *pessimistic row lock* (`SELECT ... FOR UPDATE` / `.with_for_update()`) pada modul KRS dan Penjadwalan (`Ruangan -> Dosen`) tidak dapat membuktikan *row-level locking* konkuren secara fisik di SQLite karena SQLite mengabaikan `FOR UPDATE` (harus diverifikasi lanjut pada MySQL atau PostgreSQL).
+- **Filter Semester Aktif & Kapasitas Sisi Mahasiswa**: Validasi kapasitas saat mahasiswa mengambil kelas pada `KRSManager` serta pembatasan semester aktif pada seluruh endpoint penjadwalan masih menggunakan nilai default `"20251"` / parameter query dan perlu diperketat pada integrasi akhir.
 
 ## Cara Uji
 Jalankan seluruh test suite (Unit, Integration, Property-Based Testing, dan API TestClient):
 ```powershell
 $env:PYTHONPATH = "backend"
-.\venv\Scripts\pytest.exe backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py
+.\venv\Scripts\pytest.exe backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py -v
 ```
 
 ## AI Usage Log & OPAR

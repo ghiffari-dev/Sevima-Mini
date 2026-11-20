@@ -37,7 +37,7 @@ class Dosen(User):
     nip: Mapped[str] = mapped_column(String(30), unique=True, index=True, nullable=False)
     keahlian: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    kelas: Mapped[list["Kelas"]] = relationship("Kelas", back_populates="dosen")
+    kelas: Mapped[list["Kelas"]] = relationship("app.models.course.Kelas", back_populates="dosen")
     krs_bimbingan: Mapped[list["PendaftaranKRS"]] = relationship("PendaftaranKRS", back_populates="dosen_pa")
 
     __mapper_args__ = {

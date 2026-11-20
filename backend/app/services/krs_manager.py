@@ -22,6 +22,7 @@ from app.models.krs import (
     TRANSITIONS,
     TransitionError,
 )
+from app.models.schedule import Kelas as KelasJadwal
 from app.services.krs_validator import (
     KRSContext,
     ValidationResult,
@@ -57,7 +58,14 @@ class KRSManager:
             .options(
                 selectinload(KRS.details)
                 .selectinload(KRSDetail.matakuliah)
-                .selectinload(MataKuliah.prasyarat)
+                .selectinload(MataKuliah.prasyarat),
+                selectinload(KRS.details)
+                .selectinload(KRSDetail.matakuliah)
+                .selectinload(MataKuliah.kelas)
+                .selectinload(KelasJadwal.jadwals),
+                selectinload(KRS.details)
+                .selectinload(KRSDetail.kelas)
+                .selectinload(KelasJadwal.jadwals),
             )
             .with_for_update()
         )
@@ -98,7 +106,12 @@ class KRSManager:
         accumulated_details: list[KRSDetail] = []
         for d in krs.details:
             ctx = KRSContext(
-                krs.nim, krs.semester, list(accumulated_details), d.matakuliah, self.db
+                krs.nim,
+                krs.semester,
+                list(accumulated_details),
+                d.matakuliah,
+                self.db,
+                kelas_baru=d.kelas,
             )
             res = self.chain.validate(ctx)
             if not res.ok:
@@ -108,9 +121,13 @@ class KRSManager:
         return gagal
 
     def add_course(
-        self, nim: str, kode_mk: str, requester_nim: str | None = None
+        self,
+        nim: str,
+        kode_mk: str,
+        requester_nim: str | None = None,
+        kelas_id: int | None = None,
     ) -> KRSDetail:
-        """Menambahkan 1 mata kuliah ke kartu KRS (hanya saat status DRAFT atau REVISION)."""
+        """Menambahkan 1 mata kuliah (dan kelas paralel opsional) ke kartu KRS (hanya saat DRAFT atau REVISION)."""
         krs = self._krs_terkunci(nim)
         self._cek_kepemilikan_mahasiswa(krs, requester_nim)
         if krs.status not in EDITABLE:
@@ -119,18 +136,45 @@ class KRSManager:
         stmt_mk = (
             select(MataKuliah)
             .where(MataKuliah.kode_mk == kode_mk)
-            .options(selectinload(MataKuliah.prasyarat))
+            .options(
+                selectinload(MataKuliah.prasyarat),
+                selectinload(MataKuliah.kelas).selectinload(KelasJadwal.jadwals),
+            )
         )
         mk = self.db.scalars(stmt_mk).first()
         if mk is None:
             raise KRSError(f"Mata kuliah {kode_mk} tidak ditemukan")
 
-        ctx = KRSContext(krs.nim, krs.semester, list(krs.details), mk, self.db)
+        target_kelas: KelasJadwal | None = None
+        if kelas_id is not None:
+            target_kelas = next((k for k in mk.kelas if k.id == kelas_id), None)
+            if target_kelas is None:
+                raise KRSError(
+                    f"Kelas dengan ID {kelas_id} untuk mata kuliah {kode_mk} tidak ditemukan"
+                )
+        else:
+            target_kelas = next(
+                (k for k in mk.kelas if k.semester == krs.semester), None
+            )
+
+        ctx = KRSContext(
+            krs.nim,
+            krs.semester,
+            list(krs.details),
+            mk,
+            self.db,
+            kelas_baru=target_kelas,
+        )
         hasil = self.chain.validate(ctx)
         if not hasil.ok:
             raise KRSError(hasil.message)
 
-        detail = KRSDetail(kode_mk=mk.kode_mk, matakuliah=mk)
+        detail = KRSDetail(
+            kode_mk=mk.kode_mk,
+            matakuliah=mk,
+            kelas_id=target_kelas.id if target_kelas is not None else None,
+            kelas=target_kelas,
+        )
         krs.details.append(detail)
         # Sentuh diubah_pada agar baris krs di-update dan version naik (Slide 4)
         krs.diubah_pada = datetime.now(timezone.utc)

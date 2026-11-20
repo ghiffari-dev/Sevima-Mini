@@ -215,6 +215,37 @@ def test_validate_krs_with_sqlalchemy2_db():
         assert result.passed is True
 
 
+def _attach_schedule(db, mk, hari: int, mulai: time, selesai: time, room_kode: str = "R101", semester: str = "20252") -> None:
+    """Helper fixture untuk memasangkan Kelas & Jadwal pada MataKuliah di DB."""
+    from app.models.schedule import Dosen as DosenJadwal, Jadwal, Kelas as KelasJadwal, Ruangan
+
+    room = db.get(Ruangan, room_kode)
+    if room is None:
+        room = Ruangan(kode=room_kode, nama=f"Ruang {room_kode}", kapasitas=40)
+        db.add(room)
+        db.flush()
+
+    dosen = db.query(DosenJadwal).filter_by(nidn="00990001").first()
+    if dosen is None:
+        dosen = DosenJadwal(nidn="00990001", nama="Dr. Pengampu")
+        db.add(dosen)
+        db.flush()
+
+    kls = KelasJadwal(kode_mk=mk.kode_mk, nama_kelas="A", kuota=40, semester=semester)
+    db.add(kls)
+    db.flush()
+    db.add(
+        Jadwal(
+            kelas_id=kls.id,
+            ruangan_kode=room.kode,
+            dosen_id=dosen.id,
+            hari=hari,
+            jam_mulai=mulai,
+            jam_selesai=selesai,
+        )
+    )
+
+
 def test_krs_manager_and_matakuliah_self_referential_flow():
     """Menguji MataKuliah (sd.prasyarat == [algoritma]), KRS, KRSDetail, dan KRSManager sesuai 8 slide dosen."""
     from app.models.calon_mahasiswa import CalonMahasiswa
@@ -243,32 +274,20 @@ def test_krs_manager_and_matakuliah_self_referential_flow():
             status="approved",
             nim="2025001-0001",
         )
-        algoritma = MataKuliah(
-            kode_mk="IF101",
-            nama="Algoritma",
-            sks=3,
-            hari=1,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
-        )
+        algoritma = MataKuliah(kode_mk="IF101", nama="Algoritma", sks=3)
         sd = MataKuliah(
             kode_mk="IF201",
             nama="Struktur Data",
             sks=3,
-            hari=2,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
             prasyarat=[algoritma],
         )
-        kalkulus_bentrok = MataKuliah(
-            kode_mk="IF202",
-            nama="Kalkulus",
-            sks=3,
-            hari=2,
-            jam_mulai=time(9, 0),
-            jam_selesai=time(11, 0),
-        )
+        kalkulus_bentrok = MataKuliah(kode_mk="IF202", nama="Kalkulus", sks=3)
         db.add_all([mhs, algoritma, sd, kalkulus_bentrok])
+        db.flush()
+
+        _attach_schedule(db, algoritma, 1, time(8, 0), time(10, 0), room_kode="R101", semester="20252")
+        _attach_schedule(db, sd, 2, time(8, 0), time(10, 0), room_kode="R101", semester="20252")
+        _attach_schedule(db, kalkulus_bentrok, 2, time(9, 0), time(11, 0), room_kode="R102", semester="20252")
         db.commit()
 
         # Pastikan arah join self-referential tidak tertukar (Slide 2: sd.prasyarat == [algoritma])
@@ -454,24 +473,17 @@ def test_krs_manager_ownership_validation_and_audit_guards(caplog):
             status="approved",
             nim="2025001-0002",
         )
-        algo = MataKuliah(
-            kode_mk="IF101",
-            nama="Algoritma",
-            sks=3,
-            hari=1,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
-        )
+        algo = MataKuliah(kode_mk="IF101", nama="Algoritma", sks=3)
         sd = MataKuliah(
             kode_mk="IF201",
             nama="Struktur Data",
             sks=3,
-            hari=2,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
             prasyarat=[algo],
         )
         db.add_all([mhs, algo, sd])
+        db.flush()
+        _attach_schedule(db, algo, 1, time(8, 0), time(10, 0), room_kode="R101", semester="20252")
+        _attach_schedule(db, sd, 2, time(8, 0), time(10, 0), room_kode="R101", semester="20252")
         db.commit()
 
         # Buat KRS DRAFT dengan MK yang prasyaratnya belum lulus (untuk menguji submit_krs menjalankan validate_krs)
@@ -568,23 +580,12 @@ def test_krs_locked_error_acid_log_notifikasi_and_optimistic_version_lock():
             status="approved",
             nim="2025001-0003",
         )
-        mk1 = MataKuliah(
-            kode_mk="IF101",
-            nama="Algoritma",
-            sks=3,
-            hari=1,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
-        )
-        mk2 = MataKuliah(
-            kode_mk="IF102",
-            nama="Matematika Diskrit",
-            sks=3,
-            hari=2,
-            jam_mulai=time(8, 0),
-            jam_selesai=time(10, 0),
-        )
+        mk1 = MataKuliah(kode_mk="IF101", nama="Algoritma", sks=3)
+        mk2 = MataKuliah(kode_mk="IF102", nama="Matematika Diskrit", sks=3)
         db.add_all([mhs, mk1, mk2])
+        db.flush()
+        _attach_schedule(db, mk1, 1, time(8, 0), time(10, 0), room_kode="R101", semester="20251")
+        _attach_schedule(db, mk2, 2, time(8, 0), time(10, 0), room_kode="R101", semester="20251")
         db.commit()
 
         mgr = KRSManager(db, semester="20251", dosen_pa_id=10)

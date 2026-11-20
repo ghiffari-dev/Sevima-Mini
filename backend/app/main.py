@@ -25,10 +25,7 @@ async def krs_error(request: Request, exc: KRSError):
 
 @app.exception_handler(ScheduleError)
 async def schedule_error(request: Request, exc: ScheduleError):
-    payload: dict = {"detail": str(exc)}
-    if exc.conflicts:
-        payload["conflicts"] = exc.conflicts
-    return JSONResponse(status_code=exc.status_code, content=payload)
+    return JSONResponse(status_code=exc.status_code, content=exc.body())
 
 
 DB_PATH = "backend/pmb.db"
