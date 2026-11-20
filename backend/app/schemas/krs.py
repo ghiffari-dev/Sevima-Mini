@@ -9,8 +9,7 @@ class EnrollmentResponse(EnrollmentBase):
     mahasiswa_id: str
     kelas_id: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PendaftaranKRSCreate(BaseModel):
     pilihan_matkul_ids: list[str] = Field(..., description="List ID Kelas atau Course yang dipilih")
@@ -27,8 +26,7 @@ class PendaftaranKRSResponse(BaseModel):
     dosen_pa_id: str | None = None
     enrollments: list[EnrollmentResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # =====================================================================

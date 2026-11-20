@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from app.repositories.pmb_repository import IPMBRepository
 
@@ -28,7 +28,7 @@ class PMBService:
         if not self.repo.find_jalur_by_id(data_dict["jalur_masuk_id"]):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jalur masuk tidak ditemukan.")
 
-        data_dict["created_at"] = datetime.utcnow().isoformat()
+        data_dict["created_at"] = datetime.now(timezone.utc).isoformat()
         return self.repo.save_calon_mahasiswa(data_dict)
 
     def get_status_pendaftar(self, pendaftar_id: int) -> dict:
@@ -52,9 +52,10 @@ class PMBService:
         if not kode_prodi or len(str(kode_prodi)) != 3:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kode program studi tidak valid")
 
-        tahun = datetime.utcnow().year
+        now_utc = datetime.now(timezone.utc)
+        tahun = now_utc.year
         nim = self.generate_nim(tahun, kode_prodi)
-        approved_at = datetime.utcnow().isoformat()
+        approved_at = now_utc.isoformat()
         
         self.repo.update_status_and_nim(pendaftar_id, "approved", nim, approved_at)
         updated_row = self.repo.find_pendaftar_by_id(pendaftar_id)

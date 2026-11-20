@@ -1,7 +1,12 @@
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from sqlalchemy import DateTime, ForeignKey, Text, String, Date
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
 
 class CalonMahasiswa(Base):
     __tablename__ = "calon_mahasiswa"
@@ -19,7 +24,7 @@ class CalonMahasiswa(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     nim: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     program_studi: Mapped["ProgramStudi"] = relationship(back_populates="mahasiswa")

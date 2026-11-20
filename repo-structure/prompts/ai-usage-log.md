@@ -772,7 +772,7 @@ Mendokumentasikan analisis kontradiksi & celah spesifikasi **Minggu 12: Modul Pr
 
 ### Evaluasi (Objektif)
 - **Kelebihan**: Kontradiksi aturan waktu pada dokumen brief diselesaikan secara elegan melalui pemisahan durasi sesi (30 menit) dan rotasi QR otomatis (120 detik), sambil menyelesaikan kontrak `PresensiPort` Minggu 9 tanpa regresi pada test suite lama.
-- **Catatan**: Radius geofence (`100m`), batas akurasi GPS (`150m`), interval rotasi QR (`120s`), dan kuota *rate limit* (`5`/menit) seluruhnya dapat disesuaikan melalui variabel environment pada `Settings`.
+- **Catatan**: Radius geofence (`100m`), batas akurasi GPS (`150m`), interval rotasi QR (`120s`), dan kuota *rate limit* (`5`/menit) seluruhnya dapat disesuaikan melalui variabel environment pada `Settings`. Selain itu, path database default `backend/pmb.db`, pengecekan tabel `users` pada seeder penjadwalan, penyeragaman nama mahasiswa demo lintas dashboard (`2025001-0101` s/d `2025001-0105`), serta migrasi penuh `datetime.now(timezone.utc)` & Pydantic V2 `ConfigDict` telah diselesaikan pada verifikasi integrasi akhir (**206 passed, 0 project warnings**).
 
 ---
 

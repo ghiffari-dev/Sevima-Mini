@@ -67,7 +67,7 @@ async def attendance_error(request: Request, exc: AttendanceError):
 
 
 
-DB_PATH = "backend/pmb.db"
+DB_PATH = str(Path(__file__).resolve().parent.parent / "pmb.db")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)

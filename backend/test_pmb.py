@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from datetime import datetime
+from datetime import datetime, timezone
 
 import sqlite3
 import os
@@ -120,7 +120,7 @@ def test_approve_generate_nim():
     res_data = approve_res.json()
     assert "nim" in res_data
     assert res_data["status"] == "approved"
-    expected_prefix = f"{datetime.utcnow().year}001-"
+    expected_prefix = f"{datetime.now(timezone.utc).year}001-"
     assert res_data["nim"].startswith(expected_prefix)
 
 def test_approve_idempotent():

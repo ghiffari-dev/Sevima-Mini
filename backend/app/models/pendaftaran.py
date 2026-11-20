@@ -1,13 +1,18 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import String, Integer, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
 
 class Pendaftaran(Base):
     __tablename__ = "pendaftarans"
 
     idPendaftaran: Mapped[str] = mapped_column(String(50), primary_key=True, index=True)
-    tanggalDaftar: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    tanggalDaftar: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="Draft", nullable=False)
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'pmb', 'krs'
 

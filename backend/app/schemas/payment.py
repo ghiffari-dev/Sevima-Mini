@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class PaymentBase(BaseModel):
     jumlah: float = Field(..., gt=0)
@@ -9,8 +9,7 @@ class PaymentResponse(PaymentBase):
     tanggalBayar: datetime | None = None
     statusBayar: str = "Pending"
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PembayaranPMBResponse(PaymentResponse):
     pendaftaran_pmb_id: str

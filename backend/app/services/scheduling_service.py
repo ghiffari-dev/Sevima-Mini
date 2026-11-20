@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timezone
 import logging
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, inspect, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
@@ -820,20 +820,24 @@ class SchedulingService:
 
     def seed_demo_data(self, semester: str = "20251") -> dict[str, Any]:
         """Mengisi data demo 4 model (Ruangan, Dosen, Kelas paralel, Jadwal bentrok), Admin demo, & KRS secara idempoten."""
-        demo_admin = self.db.scalars(
-            select(User).where(User.email == settings.ADMIN_DEMO_EMAIL)
-        ).first()
-        if demo_admin is None:
-            self.db.add(
-                Admin(
-                    id="ADM-001",
-                    nama="Admin Akademik",
-                    email=settings.ADMIN_DEMO_EMAIL,
-                    hashed_password=get_password_hash(settings.ADMIN_DEMO_PASSWORD),
-                    admin_role="admin_akademik",
+        bind = self.db.get_bind()
+        if inspect(bind).has_table(User.__tablename__) and inspect(bind).has_table(
+            Admin.__tablename__
+        ):
+            demo_admin = self.db.scalars(
+                select(User).where(User.email == settings.ADMIN_DEMO_EMAIL)
+            ).first()
+            if demo_admin is None:
+                self.db.add(
+                    Admin(
+                        id="ADM-001",
+                        nama="Admin Akademik",
+                        email=settings.ADMIN_DEMO_EMAIL,
+                        hashed_password=get_password_hash(settings.ADMIN_DEMO_PASSWORD),
+                        admin_role="admin_akademik",
+                    )
                 )
-            )
-            self.db.flush()
+                self.db.flush()
 
         prodi = self.db.scalars(
             select(ProgramStudi).where(ProgramStudi.kode == "001")

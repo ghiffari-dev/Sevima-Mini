@@ -1323,11 +1323,11 @@ class AttendanceService:
             self.db.flush()
 
         demo_students = [
-            ("2025001-0101", "Rina (Hadir Rutin)", "rina.demo@sevima.ac.id"),
-            ("2025001-0102", "Budi (Sering Absen Senin)", "budi.demo@sevima.ac.id"),
-            ("2025001-0103", "Citra (Hadir Tepat Waktu)", "citra.demo@sevima.ac.id"),
-            ("2025001-0104", "Doni (Berisiko <75%)", "doni.demo@sevima.ac.id"),
-            ("2025001-0105", "Eka (Hadir Rutin)", "eka.demo@sevima.ac.id"),
+            ("2025001-0101", "Andi Pratama", "andi.fin@sevima.ac.id"),
+            ("2025001-0102", "Siti Rahma", "siti.fin@sevima.ac.id"),
+            ("2025001-0103", "Bima Sakti", "bima.fin@sevima.ac.id"),
+            ("2025001-0104", "Dewi Lestari", "dewi.fin@sevima.ac.id"),
+            ("2025001-0105", "Farhan Nugroho", "farhan.fin@sevima.ac.id"),
         ]
         for nim, nama, email in demo_students:
             mhs = self.db.scalars(

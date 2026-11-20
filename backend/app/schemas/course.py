@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class ScheduleBase(BaseModel):
     hari: str = Field(..., description="Senin, Selasa, dll")
@@ -11,8 +11,7 @@ class ScheduleBase(BaseModel):
 class ScheduleResponse(ScheduleBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class KelasBase(BaseModel):
     id_kelas: str
@@ -26,8 +25,7 @@ class KelasCreate(KelasBase):
 class KelasResponse(KelasBase):
     schedule: list[ScheduleResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class CourseBase(BaseModel):
     kode: str = Field(..., min_length=3, max_length=10)
@@ -41,7 +39,6 @@ class CourseResponse(CourseBase):
     prasyarat: list["CourseResponse"] = []
     kelas: list[KelasResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 CourseResponse.model_rebuild()

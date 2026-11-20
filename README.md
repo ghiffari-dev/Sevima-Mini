@@ -243,7 +243,7 @@ backend/
 - **Backend Framework & Scheduler:** FastAPI, Uvicorn, APScheduler
 - **ORM, Migrasi, & Database:** SQLAlchemy 2.0, Alembic, SQLite
 - **Validasi, HTTP Client, & Pengujian:** Pydantic, `httpx` (integrasi opsional LLM API), Pytest, Hypothesis
-- **Frontend Admin UI:** HTML5, CSS3, Vanilla JavaScript (`/dashboard/conflicts`, `/dashboard/grades`, `/dashboard/finance`)
+- **Frontend Admin UI:** HTML5, CSS3, Vanilla JavaScript (`/dashboard/conflicts`, `/dashboard/grades`, `/dashboard/finance`, `/dashboard/attendance`)
 - **Diagrams:** Mermaid (.mmd) untuk Class Diagram & Sequence Diagram, PlantUML (.puml) untuk Use Case Diagram
 - **Dokumentasi & Arsitektur:** Markdown, Architecture Decision Records (ADR), OPAR
 
@@ -266,10 +266,12 @@ backend/
    ```bash
    pytest -o pythonpath=backend backend/test_models_and_schemas.py backend/test_pmb.py backend/tests/test_krs_property.py backend/tests/test_krs_api.py backend/tests/test_schedule.py backend/tests/test_grade.py backend/tests/test_finance.py backend/tests/test_attendance.py -v
    ```
-6. **Menjalankan Server Backend (dari folder `backend/` agar terhubung ke `backend/pmb.db` hasil migrasi Alembic):**
-   ```bash
-   cd backend && uvicorn app.main:app --reload
+6. **Menjalankan Server Backend (dapat dijalankan dari root repositori maupun dari folder `backend/` karena `DATABASE_URL` default otomatis menunjuk ke `backend/pmb.db`):**
+   ```powershell
+   $env:PYTHONPATH = "backend"
+   .\backend\venv\Scripts\uvicorn.exe app.main:app --reload --port 8000
    ```
+   *(atau `cd backend && uvicorn app.main:app --reload` jika `venv` sudah diaktifkan)*
    * Akses dokumentasi API interaktif (Swagger UI) di: http://127.0.0.1:8000/docs
    * Akses **Conflict Resolver Admin UI** di: http://127.0.0.1:8000/dashboard/conflicts (klik **Login Admin** dengan akun demo `admin.akademik@sevima.ac.id` / `admin123`, lalu klik **Muat Data Demo Bentrok**).
    * Akses **Form Input Nilai Dosen & Audit Trail** di: http://127.0.0.1:8000/dashboard/grades (klik **Muat Data Demo (Rina 90% & Budi 70%)**, lalu klik **Login Dosen Pengampu** dengan akun demo `dosen.pengampu@sevima.ac.id` / `dosen123`).

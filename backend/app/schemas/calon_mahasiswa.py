@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 import re
 
 class CalonMahasiswaCreate(BaseModel):
@@ -34,8 +34,7 @@ class CalonMahasiswaResponse(BaseModel):
     created_at: datetime
     approved_at: datetime | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DashboardStatsResponse(BaseModel):
     total_pendaftar: int

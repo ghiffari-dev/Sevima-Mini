@@ -73,7 +73,11 @@ class CalonMahasiswa(Base):
     jalur_masuk_id: Mapped[int] = mapped_column(ForeignKey("jalur_masuk.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     nim: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.datetime.now(datetime.timezone.utc),
+        nullable=False,
+    )
     approved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 engine = create_engine("sqlite:///./pmb_test.db", echo=False)

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class ProgramStudiBase(BaseModel):
     kode: str = Field(..., min_length=3, max_length=3)
@@ -11,5 +11,4 @@ class ProgramStudiCreate(ProgramStudiBase):
 class ProgramStudiResponse(ProgramStudiBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

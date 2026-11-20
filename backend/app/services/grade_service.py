@@ -45,6 +45,7 @@ class StubPresensiPort:
         self._data: dict[tuple[str, int], Decimal] = {
             k: Decimal(str(v)) for k, v in (data or {}).items()
         }
+        self._by_nim: dict[str, Decimal] = {}
         self._default = Decimal(str(default_persen))
 
     def set_persentase(
@@ -53,12 +54,22 @@ class StubPresensiPort:
         """Menetapkan persentase kehadiran dummy untuk pasangan (nim, kelas_id)."""
         self._data[(nim, int(kelas_id))] = Decimal(str(nilai))
 
+    def set_default_nim(self, nim: str, nilai: Decimal | int | str) -> None:
+        """Menetapkan persentase kehadiran default per NIM untuk kelas yang belum memiliki sesi."""
+        self._by_nim[nim] = Decimal(str(nilai))
+
     def persentase(self, nim: str, kelas_id: int) -> Decimal:
         """Mengembalikan persentase presensi mahasiswa pada kelas tertentu."""
-        return self._data.get((nim, int(kelas_id)), self._default)
+        if (nim, int(kelas_id)) in self._data:
+            return self._data[(nim, int(kelas_id))]
+        if nim in self._by_nim:
+            return self._by_nim[nim]
+        return self._default
 
 
 default_presensi_stub = StubPresensiPort()
+default_presensi_stub.set_default_nim("2025001-0101", Decimal("90.00"))
+default_presensi_stub.set_default_nim("2025001-0102", Decimal("70.00"))
 
 
 @dataclass(frozen=True)
@@ -344,8 +355,8 @@ class GradeService:
             self.db.flush()
 
         dummy_students = [
-            ("2025001-0101", "Rina (Dummy)", "rina.demo@sevima.ac.id"),
-            ("2025001-0102", "Budi (Dummy)", "budi.demo@sevima.ac.id"),
+            ("2025001-0101", "Andi Pratama", "andi.fin@sevima.ac.id"),
+            ("2025001-0102", "Siti Rahma", "siti.fin@sevima.ac.id"),
         ]
         for nim, nama, email in dummy_students:
             mhs = self.db.scalars(
@@ -498,10 +509,17 @@ class GradeService:
         self.db.commit()
 
         # Set presensi stub untuk seluruh kelas demo: Rina 90%, Budi 70%
-        if isinstance(self.presensi, StubPresensiPort):
+        target_stub = (
+            self.presensi
+            if isinstance(self.presensi, StubPresensiPort)
+            else getattr(self.presensi, "fallback_stub", None)
+        )
+        if isinstance(target_stub, StubPresensiPort):
+            target_stub.set_default_nim("2025001-0101", Decimal("90.00"))
+            target_stub.set_default_nim("2025001-0102", Decimal("70.00"))
             for kls in kelas_map.values():
-                self.presensi.set_persentase("2025001-0101", kls.id, Decimal("90.00"))
-                self.presensi.set_persentase("2025001-0102", kls.id, Decimal("70.00"))
+                target_stub.set_persentase("2025001-0101", kls.id, Decimal("90.00"))
+                target_stub.set_persentase("2025001-0102", kls.id, Decimal("70.00"))
 
         return {
             "detail": "Data demo modul nilai (Rina 90% & Budi 70%) berhasil dimuat.",

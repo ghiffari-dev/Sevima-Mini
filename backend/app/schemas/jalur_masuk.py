@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class JalurMasukBase(BaseModel):
     nama: str = Field(..., description="Nama jalur masuk seperti SNBP, SNBT, Mandiri")
@@ -9,5 +9,4 @@ class JalurMasukCreate(JalurMasukBase):
 class JalurMasukResponse(JalurMasukBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
